@@ -16,7 +16,6 @@ Arguments:
       /abc/ : search for directory with exact name abc
       b/abc : search using full-path matching (contains b/abc).
               Note: excludes children by default.
-      b/abc* : search using full-path matching (non-recursive, NO children)
       "/*abc" : search for directory (or file) ending with abc (regex)
       "/*abc/" : search for directory ending with abc (regex)
 
@@ -66,15 +65,11 @@ escape_regex_keep_star() {
 
 # Convert a user fragment to a regex fragment:
 # - escape regex metachars
-# - convert '*' to '[^/]*' (wildcard, excludes slashes - no children)
 # - handle \b safely
 to_regex_fragment() {
   local s
   s="$(escape_regex_keep_star "$1")"
   
-  # Convert * to [^/]* (non-recursive)
-  s="${s//\*/[^/]*}"
-
   # If it's not a known escape like \b, escape the backslash
   # This is a bit naive but handles the user's case.
   # We'll use a perl-style lookahead/behind if we were in a better language, 
