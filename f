@@ -24,7 +24,8 @@ Arguments:
    <search_dir>:
 
       abc: all search directories containing abc
-      /abc search directory with the absolute path /abc
+      /abc : search directory with the absolute path /abc
+      /abc/ : if path exists, search inside it. If not, find all directories named exactly abc.
       "/*abc" : all search directories ending in abc (regex)
 
       default search dir when search_dir is not provided is / (with proc,sys,dev,run excluded)
@@ -163,10 +164,27 @@ parse_search_dir() {
 
   # Absolute (or explicit relative) directory path mode
   if [[ "$raw" == /* && "$raw" != "/*"* ]]; then
-    [[ -d "$raw" ]] || { echo "Error: search_dir '$raw' is not an existing directory." >&2; exit 2; }
-    SD_mode="PATH"
-    SD_path="$(cd "$raw" && pwd -P)"
-    return 0
+    # Special case: if it is /abc/ (starts and ends with slash), check if it exists first.
+    # If not, treat as PATTERN mode for exact dir match.
+    if [[ -d "$raw" ]]; then
+      SD_mode="PATH"
+      SD_path="$(cd "$raw" && pwd -P)"
+      return 0
+    fi
+    
+    # If it looks like /abc/ but doesn't exist as a path, treat as exact directory regex
+    if [[ "$raw" == */ ]]; then
+      local frag="${raw:1}"
+      frag="${frag%/}"
+      [[ -n "$frag" ]] || { echo "Error: invalid search_dir '$raw'." >&2; exit 2; }
+      SD_mode="PATTERN"
+      SD_dir_regex="^$(to_regex_fragment "$frag")\$"
+      return 0
+    fi
+
+    # Otherwise, it looks like a path but doesn't exist.
+    echo "Error: search_dir '$raw' is not an existing directory." >&2
+    exit 2
   fi
   if [[ "$raw" == ./* || "$raw" == ../* ]]; then
     [[ -d "$raw" ]] || { echo "Error: search_dir '$raw' is not an existing directory." >&2; exit 2; }
