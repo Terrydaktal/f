@@ -18,7 +18,7 @@ Arguments:
               Note: matches everything inside that path (e.g. b/abc/def)
       "b/abc$" : search for path ending exactly in b/abc (excludes children)
       "/*abc" : search for directory (or file) ending with abc (regex)
-      "/*abc/" : search for directory exactly named abc (regex, type directory)
+      "/*abc/" : search for directory ending with abc (regex)
 
    <search_dir>:
 
