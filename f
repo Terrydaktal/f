@@ -17,7 +17,6 @@ Arguments:
       b/abc : search using full-path matching (contains b/abc).
               Note: excludes children by default.
       b/abc* : search using full-path matching (non-recursive, NO children)
-      "b/abc$" : search for path ending exactly in b/abc.
       "/*abc" : search for directory (or file) ending with abc (regex)
       "/*abc/" : search for directory ending with abc (regex)
 
