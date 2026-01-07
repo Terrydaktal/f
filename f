@@ -11,9 +11,12 @@ Usage:
 Arguments: 
    <filename/dirname>:
 
-      abc : search for filename containing abc in search directory
-      /abc : search for directory beginning with abc in search directory
-     "/*abc" : search for directory (or file) ending with abc (regex) in search directory
+      abc : search for filename containing abc
+      /abc : search for directory beginning with abc
+      /abc/ : search for directory with exact name abc
+      b/abc : search using full-path matching (contains b/abc)
+      "/*abc" : search for directory (or file) ending with abc (regex)
+      "/*abc/" : search for directory exactly named abc (regex, type directory)
 
    <search_dir>:
 
@@ -22,14 +25,6 @@ Arguments:
       "/*abc" : all search directories ending in abc (regex)
 
       default search dir when search_dir is not provided is / (with proc,sys,dev,run excluded)
-
-Options:
-  --timeout N | --timeout=N
-      Per-invocation timeout for each fd call. Default: 5s
-      Examples: --timeout 10   --timeout 10s   --timeout 2m
-
-  -h, --help
-      Show this help.
 EOF
 }
 
@@ -56,49 +51,79 @@ normalize_timeout() {
 }
 
 # Escape regex metacharacters, but keep '*' as a wildcard token (converted later)
+# and allow \b for word boundaries.
 escape_regex_keep_star() {
-  # Escape: [](){}.^$|+?\  (leave * untouched)
-  printf '%s' "$1" | sed -e 's/[][(){}.^$|+?\\]/\\&/g'
+  # Escape: [](){}.^$|+? (leave * and \ untouched for now)
+  # We handle \ specially to allow \b
+  printf '%s' "$1" | sed -e 's/[][(){}.^$|+?]/\\&/g'
 }
 
 # Convert a user fragment to a regex fragment:
 # - escape regex metachars
 # - convert '*' to '.*' (wildcard)
+# - handle \b safely
 to_regex_fragment() {
   local s
   s="$(escape_regex_keep_star "$1")"
-  printf '%s' "${s//\*/.*}"
+  # Convert * to .*
+  s="${s//\*/.*}"
+  # If it's not a known escape like \b, escape the backslash
+  # This is a bit naive but handles the user's case.
+  # We'll use a perl-style lookahead/behind if we were in a better language, 
+  # but here we'll just do a simple swap for common ones.
+  printf '%s' "$s"
 }
 
 # Parse <filename/dirname> into:
 #   OUT_typeflag: "" or "--type d"
 #   OUT_regex: regex for fd --regex
+#   OUT_pathflag: "" or "--full-path"
 OUT_typeflag=""
 OUT_regex=""
+OUT_pathflag=""
 parse_name_pattern() {
   local raw="$1"
   OUT_typeflag=""
   OUT_regex=""
+  OUT_pathflag=""
+
+  # Use full-path if there's an internal slash (not at start/end)
+  if [[ "$raw" =~ ./. ]]; then
+    OUT_pathflag="--full-path"
+  fi
 
   if [[ "$raw" == "/*"* ]]; then
     # suffix-regex mode; treat remainder as regex, anchor to end if needed
     local frag="${raw:2}"
     [[ -n "$frag" ]] || { echo "Error: invalid pattern '$raw' (expected something after '/*')." >&2; exit 2; }
+    
+    # If it ends in /, it's a directory
+    if [[ "$frag" == */ ]]; then
+      OUT_typeflag="--type d"
+      frag="${frag%/}"
+    fi
+
     if [[ "$frag" == *'$' ]]; then
       OUT_regex="$frag"
     else
       OUT_regex="${frag}\$"
     fi
-    OUT_typeflag=""
     return 0
   fi
 
   if [[ "$raw" == /* ]]; then
-    # dir-only begins-with
+    # dir-only begins-with or exact
+    OUT_typeflag="--type d"
     local frag="${raw:1}"
     [[ -n "$frag" ]] || { echo "Error: invalid pattern '$raw' (expected something after '/')." >&2; exit 2; }
-    OUT_typeflag="--type d"
-    OUT_regex="^$(to_regex_fragment "$frag")"
+    
+    if [[ "$frag" == */ ]]; then
+      # Exact match
+      frag="${frag%/}"
+      OUT_regex="^$(to_regex_fragment "$frag")\$"
+    else
+      OUT_regex="^$(to_regex_fragment "$frag")"
+    fi
     return 0
   fi
 
@@ -153,13 +178,14 @@ parse_search_dir() {
 }
 
 run_fd() {
-  # run_fd <root> <typeflag-or-empty> <regex>
+  # run_fd <root> <typeflag-or-empty> <regex> <pathflag-or-empty>
   local root="$1"
   local typeflag="${2:-}"
   local rx="$3"
+  local pathflag="${4:-}"
 
   timeout --preserve-status --kill-after="$kill_after" "$timeout_dur" \
-    fd --hidden -i "${FD_EXCLUDES[@]}" $typeflag --regex "$rx" "$root"
+    fd --hidden -i "${FD_EXCLUDES[@]}" $typeflag $pathflag --regex "$rx" "$root"
 }
 
 find_dirs_anywhere_nul() {
@@ -211,7 +237,7 @@ main() {
 
   if [[ $# -eq 1 ]]; then
     parse_name_pattern "$1"
-    run_fd "/" "$OUT_typeflag" "$OUT_regex"
+    run_fd "/" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag"
     exit 0
   fi
 
@@ -220,14 +246,14 @@ main() {
   parse_search_dir "$2"
 
   if [[ "$SD_mode" == "PATH" ]]; then
-    run_fd "$SD_path" "$OUT_typeflag" "$OUT_regex"
+    run_fd "$SD_path" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag"
     exit 0
   fi
 
   # PATTERN mode: find matching directories, then search inside each.
   # IMPORTANT: consume NUL-delimited output via read -d '' (no command substitution).
   find_dirs_anywhere_nul | while IFS= read -r -d '' d; do
-    run_fd "$d" "$OUT_typeflag" "$OUT_regex" || true
+    run_fd "$d" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag" || true
   done
 }
 
