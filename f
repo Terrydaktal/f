@@ -215,9 +215,9 @@ main() {
     exit 0
   fi
 
-  # Two args: <search_dir> <filename/dirname>
-  parse_search_dir "$1"
-  parse_name_pattern "$2"
+  # Two args: <filename/dirname> <search_dir>
+  parse_name_pattern "$1"
+  parse_search_dir "$2"
 
   if [[ "$SD_mode" == "PATH" ]]; then
     run_fd "$SD_path" "$OUT_typeflag" "$OUT_regex"
