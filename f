@@ -16,7 +16,8 @@ Arguments:
       /abc/ : search for directory with exact name abc
       b/abc : search using full-path matching (contains b/abc).
               Note: excludes children by default.
-      b/abc* : search using full-path matching and include children.
+      b/abc* : search using full-path matching, wildcard non-recursive (e.g. matches b/abc_file)
+      b/abc** : search using full-path matching, recursive (e.g. matches b/abc/def)
       "b/abc$" : search for path ending exactly in b/abc.
       "/*abc" : search for directory (or file) ending with abc (regex)
       "/*abc/" : search for directory ending with abc (regex)
@@ -66,13 +67,25 @@ escape_regex_keep_star() {
 
 # Convert a user fragment to a regex fragment:
 # - escape regex metachars
-# - convert '*' to '.*' (wildcard)
+# - convert '**' to '.*' (recursive wildcard)
+# - convert '*' to '[^/]*' (component wildcard, excludes slashes)
 # - handle \b safely
 to_regex_fragment() {
   local s
   s="$(escape_regex_keep_star "$1")"
-  # Convert * to .*
-  s="${s//\*/.*}"
+  
+  # Placeholder for **
+  local DOUBLE_STAR="___DOUBLE_STAR___"
+  
+  # Replace ** with placeholder
+  s="${s//\*\*/$DOUBLE_STAR}"
+  
+  # Replace * with [^/]* (match non-slashes)
+  s="${s//\*/[^/]*}"
+  
+  # Replace placeholder with .*
+  s="${s//$DOUBLE_STAR/.*}"
+
   # If it's not a known escape like \b, escape the backslash
   # This is a bit naive but handles the user's case.
   # We'll use a perl-style lookahead/behind if we were in a better language, 
@@ -138,14 +151,9 @@ parse_name_pattern() {
   local frag
   frag="$(to_regex_fragment "$raw")"
   if [[ -n "$OUT_pathflag" ]]; then
-    # For full-path matches, exclude children by default by anchoring to end
-    # if it looks like a literal name (ends in alphanumeric).
-    # If the user provides a wildcard or regex at the end, respect it.
-    if [[ "$raw" =~ [a-zA-Z0-9]$ ]]; then
-       OUT_regex="${frag}/?\$"
-    else
-       OUT_regex="$frag"
-    fi
+    # For full-path matches, always anchor to end (allow optional trailing slash)
+    # This prevents 'b/abc' from matching 'b/abc/def' unless the user provided a recursive wildcard.
+    OUT_regex="${frag}/?\$"
   else
     OUT_regex="$frag"
   fi
