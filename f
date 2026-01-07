@@ -14,7 +14,9 @@ Arguments:
       abc : search for filename containing abc
       /abc : search for directory beginning with abc
       /abc/ : search for directory with exact name abc
-      b/abc : search using full-path matching (contains b/abc)
+      b/abc : search using full-path matching (contains b/abc).
+              Note: matches everything inside that path (e.g. b/abc/def)
+      "b/abc$" : search for path ending exactly in b/abc (excludes children)
       "/*abc" : search for directory (or file) ending with abc (regex)
       "/*abc/" : search for directory exactly named abc (regex, type directory)
 
@@ -25,6 +27,9 @@ Arguments:
       "/*abc" : all search directories ending in abc (regex)
 
       default search dir when search_dir is not provided is / (with proc,sys,dev,run excluded)
+
+Notes:
+  - Use quotes around patterns containing $ or * to prevent shell expansion.
 EOF
 }
 
