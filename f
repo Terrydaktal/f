@@ -69,11 +69,10 @@ escape_regex_keep_star() {
 to_regex_fragment() {
   local s
   s="$(escape_regex_keep_star "$1")"
-  
-  # If it's not a known escape like \b, escape the backslash
-  # This is a bit naive but handles the user's case.
-  # We'll use a perl-style lookahead/behind if we were in a better language, 
-  # but here we'll just do a simple swap for common ones.
+
+  # Treat unescaped '*' as a wildcard; preserve escaped '\*' as a literal.
+  s="$(printf '%s' "$s" | sed -e 's/\\\*/__LITERAL_STAR__/g' -e 's/\*/.*/g' -e 's/__LITERAL_STAR__/\\*/g')"
+
   printf '%s' "$s"
 }
 
