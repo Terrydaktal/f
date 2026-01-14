@@ -179,7 +179,7 @@ parse_search_dir() {
     echo "Error: search_dir '$raw' is not an existing directory." >&2
     exit 2
   fi
-  if [[ "$raw" == ./* || "$raw" == ../* ]]; then
+  if [[ "$raw" == ./* || "$raw" == ../* || "$raw" == "." || "$raw" == ".." ]]; then
     [[ -d "$raw" ]] || { echo "Error: search_dir '$raw' is not an existing directory." >&2; exit 2; }
     SD_mode="PATH"
     SD_path="$(cd "$raw" && pwd -P)"
