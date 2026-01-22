@@ -13,7 +13,7 @@ Arguments:
 
       abc : search for filename containing abc
       /abc : search for directory beginning with abc
-      /abc/ : search for directory with exact name abc
+      /abc/ : search for file or directory with exact name abc
       b/abc : search using full-path matching (contains b/abc).
               Note: excludes children by default.
       "/*abc" : search for directory (or file) ending with abc (regex)
@@ -23,9 +23,8 @@ Arguments:
 
       abc: if ./abc exists, search inside it. Otherwise, search all directories containing abc.
       /abc : search directory with the absolute path /abc (must exist)
+      /abc/ : if path exists, search inside it. If not, find all directories named exactly abc globally.
       "/*abc" : all search directories ending in abc (regex)
-
-      Note: Trailing slashes on <search_dir> are ignored (e.g., abc/ is treated as abc).
 
       default search dir when search_dir is not provided is / (with proc,sys,dev,run excluded)
 
@@ -116,15 +115,16 @@ parse_name_pattern() {
 
   if [[ "$raw" == /* ]]; then
     # dir-only begins-with or exact
-    OUT_typeflag="--type d"
     local frag="${raw:1}"
     [[ -n "$frag" ]] || { echo "Error: invalid pattern '$raw' (expected something after '/')." >&2; exit 2; }
     
     if [[ "$frag" == */ ]]; then
-      # Exact match
+      # Exact match (file or directory)
       frag="${frag%/}"
+      OUT_typeflag=""
       OUT_regex="^$(to_regex_fragment "$frag")\$"
     else
+      OUT_typeflag="--type d"
       OUT_regex="^$(to_regex_fragment "$frag")"
     fi
     return 0
@@ -152,10 +152,6 @@ SD_path=""
 SD_dir_regex=""
 parse_search_dir() {
   local raw="$1"
-  # Strip trailing slash if it's not just "/"
-  if [[ "$raw" != "/" ]]; then
-    raw="${raw%/}"
-  fi
   SD_mode=""
   SD_path=""
   SD_dir_regex=""
@@ -167,24 +163,43 @@ parse_search_dir() {
     return 0
   fi
 
+  # Strip trailing slash for further processing if it's not just "/"
+  local normalized="$raw"
+  if [[ "$normalized" != "/" ]]; then
+    normalized="${normalized%/}"
+  fi
+
+  # If it exists after normalization, use it as a PATH.
+  if [[ -d "$normalized" ]]; then
+    SD_mode="PATH"
+    SD_path="$(cd "$normalized" && pwd -P)"
+    return 0
+  fi
+
   # Absolute directory path mode
   if [[ "$raw" == /* && "$raw" != "/*"* ]]; then
-    if [[ -d "$raw" ]]; then
-      SD_mode="PATH"
-      SD_path="$(cd "$raw" && pwd -P)"
+    # If it ends in /, treat as exact-name pattern global search
+    if [[ "$raw" == */ ]]; then
+      local frag="${raw:1}"
+      frag="${frag%/}"
+      [[ -n "$frag" ]] || { echo "Error: invalid search_dir '$raw'." >&2; exit 2; }
+      SD_mode="PATTERN"
+      SD_dir_regex="^$(to_regex_fragment "$frag")\$"
       return 0
-    else
-      echo "Error: search_dir '$raw' is not an existing directory." >&2
-      exit 2
     fi
+
+    # Otherwise, it's a strict absolute path that must exist.
+    echo "Error: search_dir '$raw' is not an existing directory." >&2
+    exit 2
   fi
 
   # Directory pattern mode
   SD_mode="PATTERN"
+  local pattern_input="$normalized"
 
-  if [[ "$raw" == "/*"* ]]; then
-    local frag="${raw:2}"
-    [[ -n "$frag" ]] || { echo "Error: invalid search_dir '$raw' (expected something after '/*')." >&2; exit 2; }
+  if [[ "$pattern_input" == "/*"* ]]; then
+    local frag="${pattern_input:2}"
+    [[ -n "$frag" ]] || { echo "Error: invalid search_dir '$pattern_input' (expected something after '/*')." >&2; exit 2; }
     if [[ "$frag" == *'$' ]]; then
       SD_dir_regex="$frag"
     else
@@ -194,7 +209,7 @@ parse_search_dir() {
   fi
 
   # contains (directory basename)
-  SD_dir_regex="$(to_regex_fragment "$raw")"
+  SD_dir_regex="$(to_regex_fragment "$pattern_input")"
 }
 
 run_fd() {
