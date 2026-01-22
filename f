@@ -26,7 +26,7 @@ Arguments:
       /abc/ : if path exists, search inside it. If not, find all directories named exactly abc globally.
       "/*abc" : all search directories ending in abc (regex)
 
-      default search dir when search_dir is not provided is / (with proc,sys,dev,run excluded)
+      default search dir when search_dir is not provided is . (current directory)
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
@@ -275,7 +275,7 @@ main() {
 
   if [[ $# -eq 1 ]]; then
     parse_name_pattern "$1"
-    run_fd "/" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag"
+    run_fd "." "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag"
     exit 0
   fi
 
