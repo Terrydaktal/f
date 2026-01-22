@@ -6,27 +6,50 @@ usage() {
 A parallel recursive file searcher
 
 Usage:
-  f <filename/dirname> [<search_dir>] [--timeout N] [--dir|-d] [--full|-f]
+  f <name> [<search_dir>] [--timeout N] [--dir|-d] [--file|-f] [--full] [-r]
 
-Arguments: 
-   <filename/dirname>:
-      If --full / -f is used, this is treated as a raw regex to search against the full file path.
-      Otherwise:
-      abc : search for file or directory containing abc
-      abc/ : search for directory ending in abc
-      /abc : search for file or directory beginning with abc
-      /abc/ : search for file or directory with exact name abc
-      "/*abc" : search for directory (or file) ending with abc (regex)
-      "/*abc/" : search for directory ending with abc (regex)
+Arguments:
+   SEARCH MATRIX:
+
+   Goal           | Shorthand | Wildcard Format | Regex Format (-r)
+   ---------------|-----------|-----------------|------------------
+   Contains (All) | f abc     | f "*abc*"       | f -r "abc"
+   Contains (File)| f abc -f  | f "*abc*" -f    | f -r "abc" -f
+   Contains (Dir) | f abc -d  | f "*abc*" -d    | f -r "abc" -d
+   Exact (All)    | -         | f "abc"         | f -r "^abc$"
+   Exact (File)   | -         | f "abc" -f      | f -r "^abc$" -f
+   Exact (Dir)    | f /abc/   | f "abc" -d      | f -r "^abc$" -d
+   Starts (All)   | f /abc    | f "abc*"        | f -r "^abc"
+   Starts (File)  | f /abc -f | f "abc*" -f     | f -r "^abc" -f
+   Starts (Dir)   | f /abc -d | f "abc*" -d     | f -r "^abc" -d
+   Ends (All)     | -         | f "*abc"        | f -r "abc$"
+   Ends (File)    | -         | f "*abc" -f     | f -r "abc$" -f
+   Ends (Dir)     | f abc/    | f "*abc" -d     | f -r "abc$" -d
+
+   The --full flag matches against the full absolute path instead of just
+   the basename.
+   Example: f --full "*/src/main.c"
+   Example: f --full -r ".*/test/.*\.py$"
+
+   Note: In Wildcard/Regex formats, the quotes must be passed literally
+   (e.g., f '"abc"').
 
    <search_dir>:
+      Location to search. Behavior follows this priority:
+      1. Local/Absolute Path: If the path exists on disk, the search is limited
+         to that directory.
+      2. Global Pattern Match: If the path does not exist, the script searches
+         the ENTIRE disk for all directories matching the pattern (see matrix
+         below) and searches inside them.
 
-      abc: if ./abc exists, search inside it. Otherwise, search all directories containing abc.
-      /abc : search directory with the absolute path /abc. If it doesn't exist, search all directories beginning with abc globally.
-      /abc/ : if path exists, search inside it. If not, find all directories named exactly abc globally.
-      "/*abc" : all search directories ending in abc (regex)
+   SEARCH DIR MATRIX:
 
-      default search dir when search_dir is not provided is . (current directory)
+   Goal           | Shorthand | Wildcard Format | Regex Format
+   ---------------|-----------|-----------------|------------------
+   Contains (Dir) | abc       | "*abc*"         | "abc"
+   Exact (Dir)    | /abc/     | "abc"           | "^abc$"
+   Starts (Dir)   | /abc      | "abc*"          | "^abc"
+   Ends (Dir)     | abc/      | "*abc"          | "abc$"
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
@@ -85,61 +108,67 @@ OUT_regex=""
 OUT_pathflag=""
 parse_name_pattern() {
   local raw="$1"
+  local use_regex="${2:-false}"
   OUT_typeflag=""
   OUT_regex=""
   OUT_pathflag=""
 
-  if [[ "$raw" == "/*"* ]]; then
-    # suffix-regex mode; treat remainder as regex, anchor to end if needed
-    local frag="${raw:2}"
-    [[ -n "$frag" ]] || { echo "Error: invalid pattern '$raw' (expected something after '/*')." >&2; exit 2; }
-    
-    # If it ends in /, it's a directory
-    if [[ "$frag" == */ ]]; then
+  # If pattern is wrapped in literal double or single quotes
+  if [[ ( "$raw" == '"'*'"' ) || ( "$raw" == "'"*"'" ) ]]; then
+    local inner="${raw:1}"
+    inner="${inner%?}"
+    if [[ "$use_regex" == "true" ]]; then
+      OUT_regex="$inner"
+    else
+      # Wildcard mode inside quotes
+      if [[ "$inner" == "*"*"*" ]]; then
+          # *foo* -> contains
+          local frag="${inner#\*}"
+          frag="${frag%\*}"
+          OUT_regex="$(to_regex_fragment "$frag")"
+      elif [[ "$inner" == "*"* ]]; then
+          # *foo -> ends with
+          local frag="${inner#\*}"
+          OUT_regex="$(to_regex_fragment "$frag")\$"
+      elif [[ "$inner" == *"*" ]]; then
+          # foo* -> starts with
+          local frag="${inner%\*}"
+          OUT_regex="^$(to_regex_fragment "$frag")"
+      else
+          # foo -> exact match
+          OUT_regex="^$(to_regex_fragment "$inner")\$"
+      fi
+    fi
+    return 0
+  fi
+
+  # Shorthand (No Quotes)
+  # Exact Dir /abc/
+  if [[ "$raw" == /*/ ]]; then
+      local frag="${raw:1}"
+      frag="${frag%/}"
       OUT_typeflag="--type d"
-      frag="${frag%/}"
-    fi
-
-    if [[ "$frag" == *'$' ]]; then
-      OUT_regex="$frag"
-    else
-      OUT_regex="${frag}\$"
-    fi
-    return 0
-  fi
-
-  if [[ "$raw" == /* ]]; then
-    # dir-only begins-with or exact
-    local frag="${raw:1}"
-    [[ -n "$frag" ]] || { echo "Error: invalid pattern '$raw' (expected something after '/')." >&2; exit 2; }
-    
-    if [[ "$frag" == */ ]]; then
-      # Exact match (file or directory)
-      frag="${frag%/}"
-      OUT_typeflag=""
       OUT_regex="^$(to_regex_fragment "$frag")\$"
-    else
-      OUT_typeflag=""
-      OUT_regex="^$(to_regex_fragment "$frag")"
-    fi
-    return 0
+      return 0
   fi
 
-  # contains (file or dir)
-  OUT_typeflag=""
-  local frag
+  # Starts-with /abc
+  if [[ "$raw" == /* ]]; then
+      local frag="${raw:1}"
+      OUT_regex="^$(to_regex_fragment "$frag")"
+      return 0
+  fi
 
-  # If pattern ends in /, assume directory ending in ...
+  # Ends-with abc/ (directory)
   if [[ "$raw" != "/" && "$raw" == */ ]]; then
     OUT_typeflag="--type d"
     local no_slash="${raw%/}"
-    frag="$(to_regex_fragment "$no_slash")"
-    OUT_regex="${frag}\$"
+    OUT_regex="$(to_regex_fragment "$no_slash")\$"
     return 0
   fi
 
-  frag="$(to_regex_fragment "$raw")"
-  OUT_regex="$frag"
+  # Default: contains
+  OUT_regex="$(to_regex_fragment "$raw")"
 }
 
 # Parse <search_dir> into:
@@ -151,6 +180,7 @@ SD_path=""
 SD_dir_regex=""
 parse_search_dir() {
   local raw="$1"
+  local use_regex="${2:-false}"
   SD_mode=""
   SD_path=""
   SD_dir_regex=""
@@ -175,43 +205,62 @@ parse_search_dir() {
     return 0
   fi
 
-  # Absolute directory path mode
-  if [[ "$raw" == /* && "$raw" != "/*"* ]]; then
-    # If it ends in /, treat as exact-name pattern global search
-    if [[ "$raw" == */ ]]; then
+  SD_mode="PATTERN"
+
+  # If pattern is wrapped in literal double or single quotes
+  if [[ ( "$raw" == '"'*'"' ) || ( "$raw" == "'"*"'" ) ]]; then
+    local inner="${raw:1}"
+    inner="${inner%?}"
+    if [[ "$use_regex" == "true" ]]; then
+      SD_dir_regex="$inner"
+    else
+      # Wildcard mode inside quotes
+      if [[ "$inner" == "*"*"*" ]]; then
+          # *foo* -> contains
+          local frag="${inner#\*}"
+          frag="${frag%\*}"
+          SD_dir_regex="$(to_regex_fragment "$frag")"
+      elif [[ "$inner" == "*"* ]]; then
+          # *foo -> ends with
+          local frag="${inner#\*}"
+          SD_dir_regex="$(to_regex_fragment "$frag")\$"
+      elif [[ "$inner" == *"*" ]]; then
+          # foo* -> starts with
+          local frag="${inner%\*}"
+          SD_dir_regex="^$(to_regex_fragment "$frag")"
+      else
+          # foo -> exact match
+          SD_dir_regex="^$(to_regex_fragment "$inner")\$"
+      fi
+    fi
+    return 0
+  fi
+
+  # Shorthand (No Quotes)
+  # Exact /abc/
+  if [[ "$raw" == /*/ ]]; then
       local frag="${raw:1}"
       frag="${frag%/}"
-      [[ -n "$frag" ]] || { echo "Error: invalid search_dir '$raw'." >&2; exit 2; }
-      SD_mode="PATTERN"
       SD_dir_regex="^$(to_regex_fragment "$frag")\$"
       return 0
-    fi
-
-    # Fallback: treat /abc as "directory name begins with abc"
-    local frag="${raw:1}"
-    [[ -n "$frag" ]] || { echo "Error: invalid search_dir '$raw'." >&2; exit 2; }
-    SD_mode="PATTERN"
-    SD_dir_regex="^$(to_regex_fragment "$frag")"
-    return 0
   fi
 
-  # Directory pattern mode
-  SD_mode="PATTERN"
-  local pattern_input="$normalized"
-
-  if [[ "$pattern_input" == "/*"* ]]; then
-    local frag="${pattern_input:2}"
-    [[ -n "$frag" ]] || { echo "Error: invalid search_dir '$pattern_input' (expected something after '/*')." >&2; exit 2; }
-    if [[ "$frag" == *'$' ]]; then
-      SD_dir_regex="$frag"
-    else
-      SD_dir_regex="${frag}\$"
-    fi
-    return 0
+  # Starts-with /abc
+  if [[ "$raw" == /* ]]; then
+      local frag="${raw:1}"
+      SD_dir_regex="^$(to_regex_fragment "$frag")"
+      return 0
   fi
 
-  # contains (directory basename)
-  SD_dir_regex="$(to_regex_fragment "$pattern_input")"
+  # Ends-with abc/
+  if [[ "$raw" != "/" && "$raw" == */ ]]; then
+      local frag="${raw%/}"
+      SD_dir_regex="$(to_regex_fragment "$frag")\$"
+      return 0
+  fi
+
+  # Default: contains
+  SD_dir_regex="$(to_regex_fragment "$normalized")"
 }
 
 run_fd() {
@@ -238,7 +287,9 @@ main() {
   # Allow --timeout, --dir/-d, --full/-f anywhere
   local positional=()
   local force_dir=false
+  local force_file=false
   local force_full=false
+  local use_regex=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -256,8 +307,16 @@ main() {
         force_dir=true
         shift
         ;;
-      --full|-f)
+      --file|-f)
+        force_file=true
+        shift
+        ;;
+      --full)
         force_full=true
+        shift
+        ;;
+      -r)
+        use_regex=true
         shift
         ;;
       -h|--help)
@@ -283,16 +342,17 @@ main() {
     exit 2
   fi
 
+  parse_name_pattern "$1" "$use_regex"
+
   if [[ "$force_full" == "true" ]]; then
-    OUT_regex="$1"
     OUT_pathflag="--full-path"
-    OUT_typeflag="" 
-  else
-    parse_name_pattern "$1"
   fi
 
   if [[ "$force_dir" == "true" ]]; then
     OUT_typeflag="--type d"
+  fi
+  if [[ "$force_file" == "true" ]]; then
+    OUT_typeflag="--type f"
   fi
 
   if [[ $# -eq 1 ]]; then
@@ -301,7 +361,7 @@ main() {
   fi
 
   # Two args: <filename/dirname> <search_dir>
-  parse_search_dir "$2"
+  parse_search_dir "$2" "$use_regex"
 
   if [[ "$SD_mode" == "PATH" ]]; then
     run_fd "$SD_path" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag"
