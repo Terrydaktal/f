@@ -6,7 +6,7 @@ usage() {
 A parallel recursive file searcher
 
 Usage:
-  f <filename/dirname> [<search_dir>] [--timeout N]
+  f <filename/dirname> [<search_dir>] [--timeout N] [--dir|-d]
 
 Arguments: 
    <filename/dirname>:
@@ -236,8 +236,10 @@ find_dirs_anywhere_nul() {
 # Main
 # ----------------------------
 main() {
-  # Allow --timeout anywhere
+  # Allow --timeout and --dir/-d anywhere
   local positional=()
+  local force_dir=false
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --timeout)
@@ -248,6 +250,10 @@ main() {
         ;;
       --timeout=*)
         timeout_dur="$(normalize_timeout "${1#*=}")"
+        shift
+        ;;
+      --dir|-d)
+        force_dir=true
         shift
         ;;
       -h|--help)
@@ -273,14 +279,17 @@ main() {
     exit 2
   fi
 
+  parse_name_pattern "$1"
+  if [[ "$force_dir" == "true" ]]; then
+    OUT_typeflag="--type d"
+  fi
+
   if [[ $# -eq 1 ]]; then
-    parse_name_pattern "$1"
     run_fd "." "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag"
     exit 0
   fi
 
   # Two args: <filename/dirname> <search_dir>
-  parse_name_pattern "$1"
   parse_search_dir "$2"
 
   if [[ "$SD_mode" == "PATH" ]]; then
