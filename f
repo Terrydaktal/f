@@ -6,11 +6,12 @@ usage() {
 A parallel recursive file searcher
 
 Usage:
-  f <filename/dirname> [<search_dir>] [--timeout N] [--dir|-d]
+  f <filename/dirname> [<search_dir>] [--timeout N] [--dir|-d] [--full|-f]
 
 Arguments: 
    <filename/dirname>:
-
+      If --full / -f is used, this is treated as a raw regex to search against the full file path.
+      Otherwise:
       abc : search for filename containing abc
       /abc : search for directory beginning with abc
       /abc/ : search for file or directory with exact name abc
@@ -223,9 +224,10 @@ find_dirs_anywhere_nul() {
 # Main
 # ----------------------------
 main() {
-  # Allow --timeout and --dir/-d anywhere
+  # Allow --timeout, --dir/-d, --full/-f anywhere
   local positional=()
   local force_dir=false
+  local force_full=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -241,6 +243,10 @@ main() {
         ;;
       --dir|-d)
         force_dir=true
+        shift
+        ;;
+      --full|-f)
+        force_full=true
         shift
         ;;
       -h|--help)
@@ -266,7 +272,14 @@ main() {
     exit 2
   fi
 
-  parse_name_pattern "$1"
+  if [[ "$force_full" == "true" ]]; then
+    OUT_regex="$1"
+    OUT_pathflag="--full-path"
+    OUT_typeflag="" 
+  else
+    parse_name_pattern "$1"
+  fi
+
   if [[ "$force_dir" == "true" ]]; then
     OUT_typeflag="--type d"
   fi
