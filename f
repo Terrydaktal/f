@@ -13,6 +13,7 @@ Arguments:
       If --full / -f is used, this is treated as a raw regex to search against the full file path.
       Otherwise:
       abc : search for filename containing abc
+      abc/ : search for directory ending in abc
       /abc : search for directory beginning with abc
       /abc/ : search for file or directory with exact name abc
       "/*abc" : search for directory (or file) ending with abc (regex)
@@ -127,6 +128,16 @@ parse_name_pattern() {
   # contains (file or dir)
   OUT_typeflag=""
   local frag
+
+  # If pattern ends in /, assume directory ending in ...
+  if [[ "$raw" != "/" && "$raw" == */ ]]; then
+    OUT_typeflag="--type d"
+    local no_slash="${raw%/}"
+    frag="$(to_regex_fragment "$no_slash")"
+    OUT_regex="${frag}\$"
+    return 0
+  fi
+
   frag="$(to_regex_fragment "$raw")"
   OUT_regex="$frag"
 }
