@@ -46,14 +46,14 @@ Arguments:
 
    Goal           | Shorthand | Wildcard Format | Regex Format
    ---------------|-----------|-----------------|------------------
-   Contains (Rel) | abc       | "*abc*"         | "abc"
+   Contains (Rel) | f . abc   | f . "*abc*"     | f . -r "abc"
    Contains (Abs) | -         | -               | -
-   Exact (Rel)    | -         | "abc"           | "^abc$"
-   Exact (Abs)    | /abc/     | "abc"           | "^abc$"
-   Starts (Rel)   | -         | "abc*"          | "^abc"
-   Starts (Abs)   | /abc      | "abc*"          | "^abc"
-   Ends (Rel)     | abc/      | "*abc"          | "abc$"
-   Ends (Abs)     | -         | "*abc"          | "abc$"
+   Exact (Rel)    | f "abc"   | f "abc" .       | f -r "^abc$" .
+   Exact (Abs)    | f . /abc/ | f . "abc"       | f . -r "^abc$"
+   Starts (Rel)   | -         | f . "abc*"      | f . -r "^abc"
+   Starts (Abs)   | f . /abc  | f . "abc*"      | f . -r "^abc"
+   Ends (Rel)     | f . abc/  | f . "*abc"      | f . -r "abc$"
+   Ends (Abs)     | -         | f . "*abc"      | f . -r "abc$"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
    search using the pattern defined by the Shorthand or Wildcard.
