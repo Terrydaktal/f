@@ -14,7 +14,7 @@ Arguments:
       Otherwise:
       abc : search for filename containing abc
       abc/ : search for directory ending in abc
-      /abc : search for directory beginning with abc
+      /abc : search for file or directory beginning with abc
       /abc/ : search for file or directory with exact name abc
       "/*abc" : search for directory (or file) ending with abc (regex)
       "/*abc/" : search for directory ending with abc (regex)
@@ -119,7 +119,7 @@ parse_name_pattern() {
       OUT_typeflag=""
       OUT_regex="^$(to_regex_fragment "$frag")\$"
     else
-      OUT_typeflag="--type d"
+      OUT_typeflag=""
       OUT_regex="^$(to_regex_fragment "$frag")"
     fi
     return 0
