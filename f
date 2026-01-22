@@ -25,6 +25,8 @@ Arguments:
       /abc : search directory with the absolute path /abc. If it doesn't exist, search all directories named exactly abc.
       "/*abc" : all search directories ending in abc (regex)
 
+      Note: Trailing slashes on <search_dir> are ignored (e.g., abc/ is treated as abc).
+
       default search dir when search_dir is not provided is / (with proc,sys,dev,run excluded)
 
 Notes:
