@@ -21,7 +21,7 @@ Arguments:
 
    <search_dir>:
 
-      abc: all search directories containing abc
+      abc: if ./abc exists, search inside it. Otherwise, search all directories containing abc.
       /abc : search directory with the absolute path /abc
       /abc/ : if path exists, search inside it. If not, find all directories named exactly abc.
       "/*abc" : all search directories ending in abc (regex)
@@ -155,16 +155,15 @@ parse_search_dir() {
   SD_path=""
   SD_dir_regex=""
 
+  # If it exists as a directory (relative or absolute), use it as a PATH.
+  if [[ -d "$raw" ]]; then
+    SD_mode="PATH"
+    SD_path="$(cd "$raw" && pwd -P)"
+    return 0
+  fi
+
   # Absolute (or explicit relative) directory path mode
   if [[ "$raw" == /* && "$raw" != "/*"* ]]; then
-    # Special case: if it is /abc/ (starts and ends with slash), check if it exists first.
-    # If not, treat as PATTERN mode for exact dir match.
-    if [[ -d "$raw" ]]; then
-      SD_mode="PATH"
-      SD_path="$(cd "$raw" && pwd -P)"
-      return 0
-    fi
-    
     # If it looks like /abc/ but doesn't exist as a path, treat as exact directory regex
     if [[ "$raw" == */ ]]; then
       local frag="${raw:1}"
