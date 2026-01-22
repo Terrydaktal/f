@@ -206,13 +206,6 @@ parse_search_dir() {
     normalized="${normalized%/}"
   fi
 
-  # If it exists after normalization, use it as a PATH.
-  if [[ -d "$normalized" ]]; then
-    SD_mode="PATH"
-    SD_path="$(cd "$normalized" && pwd -P)"
-    return 0
-  fi
-
   SD_mode="PATTERN"
 
   # If pattern is wrapped in literal double or single quotes
