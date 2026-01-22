@@ -14,8 +14,6 @@ Arguments:
       abc : search for filename containing abc
       /abc : search for directory beginning with abc
       /abc/ : search for file or directory with exact name abc
-      b/abc : search using full-path matching (contains b/abc).
-              Note: excludes children by default.
       "/*abc" : search for directory (or file) ending with abc (regex)
       "/*abc/" : search for directory ending with abc (regex)
 
@@ -89,11 +87,6 @@ parse_name_pattern() {
   OUT_regex=""
   OUT_pathflag=""
 
-  # Use full-path if there's an internal slash (not at start/end)
-  if [[ "$raw" =~ ./. ]]; then
-    OUT_pathflag="--full-path"
-  fi
-
   if [[ "$raw" == "/*"* ]]; then
     # suffix-regex mode; treat remainder as regex, anchor to end if needed
     local frag="${raw:2}"
@@ -134,13 +127,7 @@ parse_name_pattern() {
   OUT_typeflag=""
   local frag
   frag="$(to_regex_fragment "$raw")"
-  if [[ -n "$OUT_pathflag" ]]; then
-    # For full-path matches, always anchor to end (allow optional trailing slash)
-    # This prevents 'b/abc' from matching 'b/abc/def' unless the user provided a recursive wildcard.
-    OUT_regex="${frag}/?\$"
-  else
-    OUT_regex="$frag"
-  fi
+  OUT_regex="$frag"
 }
 
 # Parse <search_dir> into:
