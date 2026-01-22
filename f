@@ -15,16 +15,16 @@ Arguments:
    ---------------|-----------|-----------------|------------------
    Contains (All) | f abc     | f "*abc*"       | f -r "abc"
    Contains (File)| f abc -f  | f "*abc*" -f    | f -r "abc" -f
-   Contains (Dir) | f abc -d  | f "*abc*" -d    | f -r "abc" -d
+   Contains (Rel) | f abc -d  | f "*abc*" -d    | f -r "abc" -d
    Exact (All)    | -         | f "abc"         | f -r "^abc$"
    Exact (File)   | -         | f "abc" -f      | f -r "^abc$" -f
-   Exact (Dir)    | f /abc/   | f "abc" -d      | f -r "^abc$" -d
+   Exact (Abs)    | f /abc/   | f "abc" -d      | f -r "^abc$" -d
    Starts (All)   | f /abc    | f "abc*"        | f -r "^abc"
    Starts (File)  | f /abc -f | f "abc*" -f     | f -r "^abc" -f
-   Starts (Dir)   | f /abc -d | f "abc*" -d     | f -r "^abc" -d
+   Starts (Abs)   | f /abc -d | f "abc*" -d     | f -r "^abc" -d
    Ends (All)     | -         | f "*abc"        | f -r "abc$"
    Ends (File)    | -         | f "*abc" -f     | f -r "abc$" -f
-   Ends (Dir)     | f abc/    | f "*abc" -d     | f -r "abc$" -d
+   Ends (Rel)     | f abc/    | f "*abc" -d     | f -r "abc$" -d
 
    The --full flag matches against the full absolute path instead of just
    the basename.
@@ -46,10 +46,18 @@ Arguments:
 
    Goal           | Shorthand | Wildcard Format | Regex Format
    ---------------|-----------|-----------------|------------------
-   Contains (Dir) | abc       | "*abc*"         | "abc"
-   Exact (Dir)    | /abc/     | "abc"           | "^abc$"
-   Starts (Dir)   | /abc      | "abc*"          | "^abc"
-   Ends (Dir)     | abc/      | "*abc"          | "abc$"
+   Contains (Rel) | abc       | "*abc*"         | "abc"
+   Contains (Abs) | -         | -               | -
+   Exact (Rel)    | -         | "abc"           | "^abc$"
+   Exact (Abs)    | /abc/     | "abc"           | "^abc$"
+   Starts (Rel)   | -         | "abc*"          | "^abc"
+   Starts (Abs)   | /abc      | "abc*"          | "^abc"
+   Ends (Rel)     | abc/      | "*abc"          | "abc$"
+   Ends (Abs)     | -         | "*abc"          | "abc$"
+
+   Note: If the 1st check (Literal Path) fails, the script performs a global
+   search using the pattern defined by the Shorthand or Wildcard.
+   In Wildcard/Regex formats, quotes must be passed literally (e.g., f . '"abc"').
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
