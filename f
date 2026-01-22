@@ -22,7 +22,7 @@ Arguments:
    <search_dir>:
 
       abc: if ./abc exists, search inside it. Otherwise, search all directories containing abc.
-      /abc : search directory with the absolute path /abc (must exist)
+      /abc : search directory with the absolute path /abc. If it doesn't exist, search all directories beginning with abc globally.
       /abc/ : if path exists, search inside it. If not, find all directories named exactly abc globally.
       "/*abc" : all search directories ending in abc (regex)
 
@@ -188,9 +188,12 @@ parse_search_dir() {
       return 0
     fi
 
-    # Otherwise, it's a strict absolute path that must exist.
-    echo "Error: search_dir '$raw' is not an existing directory." >&2
-    exit 2
+    # Fallback: treat /abc as "directory name begins with abc"
+    local frag="${raw:1}"
+    [[ -n "$frag" ]] || { echo "Error: invalid search_dir '$raw'." >&2; exit 2; }
+    SD_mode="PATTERN"
+    SD_dir_regex="^$(to_regex_fragment "$frag")"
+    return 0
   fi
 
   # Directory pattern mode
