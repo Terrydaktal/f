@@ -12,7 +12,7 @@ Arguments:
    <filename/dirname>:
       If --full / -f is used, this is treated as a raw regex to search against the full file path.
       Otherwise:
-      abc : search for filename containing abc
+      abc : search for file or directory containing abc
       abc/ : search for directory ending in abc
       /abc : search for file or directory beginning with abc
       /abc/ : search for file or directory with exact name abc
