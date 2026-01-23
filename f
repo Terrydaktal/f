@@ -46,13 +46,13 @@ Arguments:
 
    Goal           | Shorthand | Wildcard Format | Regex Format
    ---------------|-----------|-----------------|------------------
-   Contains (Rel) | abc       | -               | -
+   Contains (Rel) | abc       | "*abc*"         | "abc"
    Contains (Abs) | -         | "/*abc*"        | "/abc/"
-   Exact (Rel)    | ./abc/    | -               | -
+   Exact (Rel)    | ./abc/    | "abc"           | "^abc$"
    Exact (Abs)    | /abc/     | "/abc"          | "/^abc$/"
-   Starts (Rel)   | ./abc     | -               | -
+   Starts (Rel)   | ./abc     | "abc*"          | "^abc"
    Starts (Abs)   | /abc      | "/abc*"         | "/^abc/"
-   Ends (Rel)     | abc/      | -               | -
+   Ends (Rel)     | abc/      | "*abc"          | "abc$"
    Ends (Abs)     | -         | "/*abc"         | "/abc$/"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
@@ -212,34 +212,42 @@ parse_search_dir() {
   SD_mode="PATTERN"
 
   # If pattern is wrapped in literal double or single quotes
-  if [[ ( "$raw" == '"'*'"' ) || ( "$raw" == "'"*"'" ) ]]; then
+  if [[ ( "$raw" == '"'* '"' ) || ( "$raw" == "'"*"'" ) ]]; then
     local inner="${raw:1}"
     inner="${inner%?}"
 
+    # Path check for the inner content (Relative or Absolute)
+    if [[ -d "$inner" ]]; then
+      SD_mode="PATH"
+      SD_path="$(cd "$inner" && pwd -P)"
+      return 0
+    fi
+
     # Strip leading/trailing slashes for basename patterns (unless it's just "/")
-    inner="${inner#/}"
-    [[ "$inner" != "/" ]] && inner="${inner%/}"
+    local pattern_inner="$inner"
+    pattern_inner="${pattern_inner#/}"
+    [[ "$pattern_inner" != "/" ]] && pattern_inner="${pattern_inner%/}"
 
     if [[ "$use_regex" == "true" ]]; then
-      SD_dir_regex="$inner"
+      SD_dir_regex="$pattern_inner"
     else
       # Wildcard mode inside quotes
-      if [[ "$inner" == "*"*"*" ]]; then
+      if [[ "$pattern_inner" == "*"*"*" ]]; then
           # *foo* -> contains
-          local frag="${inner#\*}"
+          local frag="${pattern_inner#\*}"
           frag="${frag%\*}"
           SD_dir_regex="$(to_regex_fragment "$frag")"
-      elif [[ "$inner" == "*"* ]]; then
+      elif [[ "$pattern_inner" == "*"* ]]; then
           # *foo -> ends with
-          local frag="${inner#\*}"
+          local frag="${pattern_inner#\*}"
           SD_dir_regex="$(to_regex_fragment "$frag")\$"
-      elif [[ "$inner" == *"*" ]]; then
+      elif [[ "$pattern_inner" == *"*" ]]; then
           # foo* -> starts with
-          local frag="${inner%\*}"
+          local frag="${pattern_inner%\*}"
           SD_dir_regex="^$(to_regex_fragment "$frag")"
       else
           # foo -> exact match
-          SD_dir_regex="^$(to_regex_fragment "$inner")\$"
+          SD_dir_regex="^$(to_regex_fragment "$pattern_inner")\$"
       fi
     fi
     return 0
