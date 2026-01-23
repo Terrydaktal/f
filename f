@@ -65,6 +65,8 @@ Options:
       Limit results to files.
   --full
       Match against the full absolute path instead of just the basename.
+  -r
+      Enable regex mode for search patterns.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
