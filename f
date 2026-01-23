@@ -47,13 +47,13 @@ Arguments:
    Goal           | Shorthand | Wildcard Format | Regex Format
    ---------------|-----------|-----------------|------------------
    Contains (Rel) | abc       | -               | -
-   Contains (Abs) | /*abc     | "*abc*"         | "abc"
+   Contains (Abs) | -         | "*abc*"         | "abc"
    Exact (Rel)    | ./abc/    | -               | -
    Exact (Abs)    | /abc/     | "abc"           | "^abc$"
    Starts (Rel)   | ./abc     | -               | -
    Starts (Abs)   | /abc      | "abc*"          | "^abc"
    Ends (Rel)     | abc/      | -               | -
-   Ends (Abs)     | /*abc/    | "*abc"          | "abc$"
+   Ends (Abs)     | -         | "*abc"          | "abc$"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
 
@@ -233,20 +233,6 @@ parse_search_dir() {
       fi
     fi
     return 0
-  fi
-
-  # Absolute Shorthands (Global)
-  if [[ "$raw" == "/*"* ]]; then
-      local frag="${raw:2}"
-      if [[ "$frag" == */ ]]; then
-          # /*abc/ -> ends with global
-          SD_dir_regex="$(to_regex_fragment "${frag%/}")\$"
-      else
-          # /*abc -> contains global
-          SD_dir_regex="$(to_regex_fragment "$frag")"
-      fi
-      SD_mode="PATTERN"
-      return 0
   fi
 
   # Shorthand (No Quotes)
