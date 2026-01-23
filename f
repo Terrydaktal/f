@@ -46,13 +46,13 @@ Arguments:
 
    Goal           | Shorthand | Wildcard Format | Regex Format
    ---------------|-----------|-----------------|------------------
-   Contains (Rel) | abc       | -               | -
+   Contains (Rel) | abc       | "*abc*"         | "abc"
    Contains (Abs) | -         | "*abc*"         | "abc"
-   Exact (Rel)    | -         | -               | -
+   Exact (Rel)    | ./abc/    | "abc"           | "^abc$"
    Exact (Abs)    | /abc/     | "abc"           | "^abc$"
-   Starts (Rel)   | -         | -               | -
+   Starts (Rel)   | ./abc     | "abc*"          | "^abc"
    Starts (Abs)   | /abc      | "abc*"          | "^abc"
-   Ends (Rel)     | abc/      | -               | -
+   Ends (Rel)     | abc/      | "*abc"          | "abc$"
    Ends (Abs)     | -         | "*abc"          | "abc$"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
@@ -238,17 +238,26 @@ parse_search_dir() {
   fi
 
   # Shorthand (No Quotes)
-  # Exact /abc/
+  # Exact /abc/ or ./abc/
   if [[ "$raw" == /*/ ]]; then
       local frag="${raw:1}"
       frag="${frag%/}"
       SD_dir_regex="^$(to_regex_fragment "$frag")\$"
       return 0
+  elif [[ "$raw" == ./*/ ]]; then
+      local frag="${raw:2}"
+      frag="${frag%/}"
+      SD_dir_regex="^$(to_regex_fragment "$frag")\$"
+      return 0
   fi
 
-  # Starts-with /abc
+  # Starts-with /abc or ./abc
   if [[ "$raw" == /* ]]; then
       local frag="${raw:1}"
+      SD_dir_regex="^$(to_regex_fragment "$frag")"
+      return 0
+  elif [[ "$raw" == ./* ]]; then
+      local frag="${raw:2}"
       SD_dir_regex="^$(to_regex_fragment "$frag")"
       return 0
   fi
