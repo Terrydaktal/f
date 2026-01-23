@@ -125,7 +125,7 @@ OUT_pathflag=""
 parse_name_pattern() {
   local raw="$1"
   local use_regex=false
-  if [[ "$raw" == r'"'*'"' || "$raw" == r"'"* "'" ]]; then
+  if [[ "$raw" == r'"'*'"' || "$raw" == r"'"*"'" ]]; then
     use_regex=true
     raw="${raw:1}"
   fi
@@ -211,7 +211,7 @@ SD_dir_regex=""
 parse_search_dir() {
   local raw="$1"
   local use_regex=false
-  if [[ "$raw" == r'"'*'"' || "$raw" == r"'"* "'" ]]; then
+  if [[ "$raw" == r'"'*'"' || "$raw" == r"'"*"'" ]]; then
     use_regex=true
     raw="${raw:1}"
   fi
