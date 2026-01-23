@@ -2,7 +2,9 @@
 set -euo pipefail
 
 usage() {
-  cat <<'EOF'
+  local cols
+  cols=$(tput cols 2>/dev/null || echo 80)
+  cat <<'EOF' | cut -c 1-"$cols"
 A parallel recursive file searcher
 
 Usage:
