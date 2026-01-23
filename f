@@ -59,6 +59,11 @@ Arguments:
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
+
+Options:
+  --timeout N
+      Per-invocation timeout for each fd call. Default: 6s
+      Examples: --timeout 10, --timeout 10s, --timeout 2m
 EOF
 }
 
