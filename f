@@ -9,9 +9,15 @@ usage() {
 A parallel recursive file searcher
 
 Usage:
-  f <name> [<search_dir>] [--dir|-d] [--file|-f] [--full] [--timeout N]
+  f <filename/dirname> [<search_dir>]
+  f --full <pattern1>  [<pattern2> <pattern3>...]   
+                       [--dir|-d] [--file|-f] [--bypass|-b] [--timeout N]
 
 Arguments:
+   <filename/dirname>:
+      The file or directory name to search for. Supports exact, partial,
+      and regex matching based on the pattern format (see matrix below).
+
    SEARCH MATRIX:
 
    Goal           | Shorthand | Wildcard Format | Regex Format (r"")
@@ -29,12 +35,6 @@ Arguments:
    Ends (File)    | -         | f "*abc" -f     | f r"abc$" -f
    Ends (Dir)     | f abc/    | f "*abc" -d     | f r"abc$" -d
 
-   The --full flag matches against the full absolute path instead of just the basename.
-   Example: f --full "*/src/main.c"
-   Example: f --full r".*/test/.*\.py$"
-
-   Note: In Wildcard/Regex formats, the quotes must be passed literally (e.g., f '"abc"').
-
    <search_dir>:
       Location to search. Behavior follows this priority:
       1. Local/Absolute Path: If the path exists on disk, the search is limited to that directory.
@@ -44,16 +44,21 @@ Arguments:
 
    Goal           | Shorthand | Wildcard Format | Regex Format (r"")
    ---------------|-----------|-----------------|------------------
-   Contains (Rel) | -         | "*abc*"         | r"abc"
-   Contains (Abs) | -         | "/*abc*"        | r"/abc/"
-   Exact (Rel)    | abc       | "abc"           | r"^abc$"
-   Exact (Abs)    | /abc      | "/abc"          | r"/^abc$/"
-   Starts (Rel)   | -         | "abc*"          | r"^abc"
-   Starts (Abs)   | -         | "/abc*"         | r"/^abc/"
-   Ends (Rel)     | -         | "*abc"          | r"abc$"
-   Ends (Abs)     | -         | "/*abc"         | r"/abc$/"
+   Contains       | abc       | "*abc*"         | r"abc"
+   Exact          | /abc/     | "abc"           | r"^abc$"
+   Starts         | /abc      | "abc*"          | r"^abc"
+   Ends           | abc/      | "*abc"          | r"abc$"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
+
+
+   The --full flag matches against the full absolute path instead of just the basename.
+   It supports multiple patterns (implicit AND) and prunes redundant child results.
+   
+   Example: f --full "src" "main"   # Matches BOTH (hides children)
+   Example: f --full "test"         # Returns /path/to/test, but hides /path/to/test/file
+
+   Note: In Wildcard/Regex formats, the quotes must be passed literally (e.g., f '"abc"').
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
@@ -69,6 +74,8 @@ Options:
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
+  --bypass, -b
+      Force treating the search_dir as a pattern, even if it exists as a directory.
 EOF
 }
 
@@ -77,6 +84,7 @@ EOF
 # ----------------------------
 timeout_dur="6s"
 kill_after="2s"
+FORCE_PATTERN_MODE=false
 
 # Exclude pseudo-filesystems that are usually noise / expensive
 FD_EXCLUDES=(--exclude proc --exclude sys --exclude dev --exclude run)
@@ -220,7 +228,7 @@ parse_search_dir() {
   SD_dir_regex=""
 
   # If it exists as a directory (relative or absolute), use it as a PATH.
-  if [[ "$use_regex" == "false" && -d "$raw" ]]; then
+  if [[ "$FORCE_PATTERN_MODE" == "false" && "$use_regex" == "false" && -d "$raw" ]]; then
     SD_mode="PATH"
     SD_path="$(cd "$raw" && pwd -P)"
     return 0
@@ -334,6 +342,23 @@ find_dirs_anywhere_nul() {
     fd --hidden -i "${FD_EXCLUDES[@]}" --type d --regex "$SD_dir_regex" "/" -0
 }
 
+prune_children() {
+  # Input must be sorted. Filters out paths that are children of the previous path.
+  awk '{
+    # Normalize last path: remove trailing slash for prefix construction
+    prefix = last
+    sub(/\/$/, "", prefix)
+    
+    # Check if current line starts with prefix + "/"
+    # Ensure prefix is not empty or handled correctly
+    if (last != "" && index($0, prefix "/") == 1) {
+      next
+    }
+    print $0
+    last = $0
+  }'
+}
+
 # ----------------------------
 # Main
 # ----------------------------
@@ -368,6 +393,10 @@ main() {
         force_full=true
         shift
         ;;
+      --bypass|-b)
+        FORCE_PATTERN_MODE=true
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -386,11 +415,79 @@ main() {
 
   set -- "${positional[@]}"
 
-  if [[ $# -lt 1 || $# -gt 2 ]]; then
+  if [[ $# -lt 1 ]]; then
     usage
     exit 2
   fi
 
+  # ---------------------------------------------------------
+  # --full Mode: Support multiple patterns (AND logic) + Pruning
+  # ---------------------------------------------------------
+  if [[ "$force_full" == "true" ]]; then
+    # Identify Search Directory
+    # Rule: If the last argument is a valid directory, use it. Otherwise search "."
+    # (Unless there's only 1 arg and it's not a dir? Then we search "." anyway)
+    local search_root="."
+    local patterns=()
+    local last_arg="${!#}"
+
+    if [[ $# -gt 1 && -d "$last_arg" ]]; then
+      search_root="$last_arg"
+      # Take all args except the last
+      patterns=("${@:1:$#-1}")
+    else
+      # All args are patterns
+      patterns=("${@}")
+    fi
+
+    # Determine type flags (dirs/files) based on flags and pattern hints
+    local type_arg=""
+    [[ "$force_dir" == "true" ]] && type_arg="--type d"
+    [[ "$force_file" == "true" ]] && type_arg="--type f"
+
+    # Pre-calculate regexes for all patterns
+    local regexes=()
+    for p in "${patterns[@]}"; do
+      parse_name_pattern "$p"
+      regexes+=("$OUT_regex")
+      # If any pattern implies directory (e.g. "foo/"), force dir mode unless file mode is explicit
+      if [[ "$OUT_typeflag" == "--type d" && "$force_file" == "false" ]]; then
+        type_arg="--type d"
+      fi
+    done
+
+    # Run the pipeline
+    # 1. fd with the first regex
+    # 2. grep for subsequent regexes
+    # 3. sort
+    # 4. prune_children (if searching directories, or mixed? Pruning valid for all paths really)
+    #    Actually, if we found /a/b and /a/b/c, and both matched, user wants only /a/b.
+
+    local first_regex="${regexes[0]}"
+    
+    # We use a subshell to construct the pipe chain
+    (
+      # Use --color=never for pipes to avoid escape codes confusing grep/awk
+      # Use --full-path explicitly
+      run_fd "$search_root" "$type_arg" "$first_regex" "--full-path" --color=never \
+      | {
+        # Loop through remaining patterns and pipe through grep -P
+        for ((i=1; i<${#regexes[@]}; i++)); do
+           grep -P "${regexes[$i]}" || true # || true to prevent pipe crash if empty
+        done
+        # Pass through cat if no more patterns (noop)
+        cat
+      } \
+      | sort \
+      | prune_children
+    )
+
+    exit 0
+  fi
+
+  # ---------------------------------------------------------
+  # Standard Mode (Original Behavior)
+  # ---------------------------------------------------------
   parse_name_pattern "$1"
 
   if [[ "$force_full" == "true" ]]; then
