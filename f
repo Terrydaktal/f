@@ -3,7 +3,8 @@ set -euo pipefail
 
 usage() {
   local cols
-  cols=$(tput cols 2>/dev/null || echo 120)
+  cols=$(tput cols 2>/dev/null || echo 77)
+  [[ $cols -gt 77 ]] && cols=77
   cat <<'EOF' | cut -c 1-"$cols"
 A parallel recursive file searcher
 
