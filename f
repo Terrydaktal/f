@@ -44,13 +44,13 @@ Arguments:
 
    Goal           | Shorthand | Wildcard Format | Regex Format
    ---------------|-----------|-----------------|------------------
-   Contains (Rel) | abc       | "*abc*"         | "abc"
+   Contains (Rel) | -         | "*abc*"         | "abc"
    Contains (Abs) | -         | "/*abc*"        | "/abc/"
-   Exact (Rel)    | ./abc/    | "abc"           | "^abc$"
-   Exact (Abs)    | /abc/     | "/abc"          | "/^abc$/"
-   Starts (Rel)   | ./abc     | "abc*"          | "^abc"
-   Starts (Abs)   | /abc      | "/abc*"         | "/^abc/"
-   Ends (Rel)     | abc/      | "*abc"          | "abc$"
+   Exact (Rel)    | abc       | "abc"           | "^abc$"
+   Exact (Abs)    | /abc      | "/abc"          | "/^abc$/"
+   Starts (Rel)   | -         | "abc*"          | "^abc"
+   Starts (Abs)   | -         | "/abc*"         | "/^abc/"
+   Ends (Rel)     | -         | "*abc"          | "abc$"
    Ends (Abs)     | -         | "/*abc"         | "/abc$/"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
