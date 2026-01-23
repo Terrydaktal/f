@@ -9,7 +9,7 @@ usage() {
 A parallel recursive file searcher
 
 Usage:
-  f <name> [<search_dir>] [--timeout N] [--dir|-d] [--file|-f] [--full] [-r]
+  f <name> [<search_dir>] [--dir|-d] [--file|-f] [--full] [-r] [--timeout N]
 
 Arguments:
    SEARCH MATRIX:
@@ -59,6 +59,12 @@ Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
 
 Options:
+  --dir, -d
+      Limit results to directories.
+  --file, -f
+      Limit results to files.
+  --full
+      Match against the full absolute path instead of just the basename.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
