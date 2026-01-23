@@ -212,7 +212,7 @@ parse_search_dir() {
   SD_mode="PATTERN"
 
   # If pattern is wrapped in literal double or single quotes
-  if [[ ( "$raw" == '"'* '"' ) || ( "$raw" == "'"*"'" ) ]]; then
+  if [[ ( "$raw" == '"'*'"' ) || ( "$raw" == "'"*"'" ) ]]; then
     local inner="${raw:1}"
     inner="${inner%?}"
 
