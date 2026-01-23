@@ -49,7 +49,7 @@ Arguments:
    Contains (Rel) | abc       | -               | -
    Contains (Abs) | -         | "/*abc*"        | "/abc/"
    Exact (Rel)    | ./abc/    | -               | -
-   Exact (Abs)    | /abc/     | "/abc/"         | "/^abc$/"
+   Exact (Abs)    | /abc/     | "/abc"          | "/^abc$/"
    Starts (Rel)   | ./abc     | -               | -
    Starts (Abs)   | /abc      | "/abc*"         | "/^abc/"
    Ends (Rel)     | abc/      | -               | -
