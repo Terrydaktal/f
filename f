@@ -18,16 +18,16 @@ Arguments:
    ---------------|-----------|-----------------|------------------
    Contains (All) | f abc     | f "*abc*"       | f -r "abc"
    Contains (File)| f abc -f  | f "*abc*" -f    | f -r "abc" -f
-   Contains (Rel) | f abc -d  | f "*abc*" -d    | f -r "abc" -d
+   Contains (Dir) | f abc -d  | f "*abc*" -d    | f -r "abc" -d
    Exact (All)    | -         | f "abc"         | f -r "^abc$"
    Exact (File)   | -         | f "abc" -f      | f -r "^abc$" -f
-   Exact (Abs)    | f /abc/   | f "abc" -d      | f -r "^abc$" -d
+   Exact (Dir)    | f /abc/   | f "abc" -d      | f -r "^abc$" -d
    Starts (All)   | f /abc    | f "abc*"        | f -r "^abc"
    Starts (File)  | f /abc -f | f "abc*" -f     | f -r "^abc" -f
-   Starts (Abs)   | f /abc -d | f "abc*" -d     | f -r "^abc" -d
+   Starts (Dir)   | f /abc -d | f "abc*" -d     | f -r "^abc" -d
    Ends (All)     | -         | f "*abc"        | f -r "abc$"
    Ends (File)    | -         | f "*abc" -f     | f -r "abc$" -f
-   Ends (Rel)     | f abc/    | f "*abc" -d     | f -r "abc$" -d
+   Ends (Dir)     | f abc/    | f "*abc" -d     | f -r "abc$" -d
 
    The --full flag matches against the full absolute path instead of just the basename.
    Example: f --full "*/src/main.c"
@@ -44,14 +44,14 @@ Arguments:
 
    Goal           | Shorthand | Wildcard Format | Regex Format
    ---------------|-----------|-----------------|------------------
-   Contains (Rel) | abc       | "*abc*"         | "abc"
-   Contains (Abs) | -         | "/*abc*"        | "/abc/"
-   Exact (Rel)    | ./abc/    | "abc"           | "^abc$"
-   Exact (Abs)    | /abc/     | "/abc"          | "/^abc$/"
-   Starts (Rel)   | ./abc     | "abc*"          | "^abc"
-   Starts (Abs)   | /abc      | "/abc*"         | "/^abc/"
-   Ends (Rel)     | abc/      | "*abc"          | "abc$"
-   Ends (Abs)     | -         | "/*abc"         | "/abc$/"
+   Contains (Dir) | abc       | "*abc*"         | "abc"
+   Contains (Dir) | -         | "/*abc*"        | "/abc/"
+   Exact (Dir)    | ./abc/    | "abc"           | "^abc$"
+   Exact (Dir)    | /abc/     | "/abc"          | "/^abc$/"
+   Starts (Dir)   | ./abc     | "abc*"          | "^abc"
+   Starts (Dir)   | /abc      | "/abc*"         | "/^abc/"
+   Ends (Dir)     | abc/      | "*abc"          | "abc$"
+   Ends (Dir)     | -         | "/*abc"         | "/abc$/"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
 
