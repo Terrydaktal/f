@@ -9,29 +9,29 @@ usage() {
 A parallel recursive file searcher
 
 Usage:
-  f <name> [<search_dir>] [--dir|-d] [--file|-f] [--full] [-r] [--timeout N]
+  f <name> [<search_dir>] [--dir|-d] [--file|-f] [--full] [--timeout N]
 
 Arguments:
    SEARCH MATRIX:
 
-   Goal           | Shorthand | Wildcard Format | Regex Format (-r)
+   Goal           | Shorthand | Wildcard Format | Regex Format (r:)
    ---------------|-----------|-----------------|------------------
-   Contains (All) | f abc     | f "*abc*"       | f -r "abc"
-   Contains (File)| f abc -f  | f "*abc*" -f    | f -r "abc" -f
-   Contains (Dir) | f abc -d  | f "*abc*" -d    | f -r "abc" -d
-   Exact (All)    | -         | f "abc"         | f -r "^abc$"
-   Exact (File)   | -         | f "abc" -f      | f -r "^abc$" -f
-   Exact (Dir)    | f /abc/   | f "abc" -d      | f -r "^abc$" -d
-   Starts (All)   | f /abc    | f "abc*"        | f -r "^abc"
-   Starts (File)  | f /abc -f | f "abc*" -f     | f -r "^abc" -f
-   Starts (Dir)   | f /abc -d | f "abc*" -d     | f -r "^abc" -d
-   Ends (All)     | -         | f "*abc"        | f -r "abc$"
-   Ends (File)    | -         | f "*abc" -f     | f -r "abc$" -f
-   Ends (Dir)     | f abc/    | f "*abc" -d     | f -r "abc$" -d
+   Contains (All) | f abc     | f "*abc*"       | f r:abc
+   Contains (File)| f abc -f  | f "*abc*" -f    | f r:abc -f
+   Contains (Dir) | f abc -d  | f "*abc*" -d    | f r:abc -d
+   Exact (All)    | -         | f "abc"         | f r:^abc$
+   Exact (File)   | -         | f "abc" -f      | f r:^abc$ -f
+   Exact (Dir)    | f /abc/   | f "abc" -d      | f r:^abc$ -d
+   Starts (All)   | f /abc    | f "abc*"        | f r:^abc
+   Starts (File)  | f /abc -f | f "abc*" -f     | f r:^abc -f
+   Starts (Dir)   | f /abc -d | f "abc*" -d     | f r:^abc -d
+   Ends (All)     | -         | f "*abc"        | f r:abc$
+   Ends (File)    | -         | f "*abc" -f     | f r:abc$ -f
+   Ends (Dir)     | f abc/    | f "*abc" -d     | f r:abc$ -d
 
    The --full flag matches against the full absolute path instead of just the basename.
    Example: f --full "*/src/main.c"
-   Example: f --full -r ".*/test/.*\.py$"
+   Example: f --full r:.*/test/.*\.py$
 
    Note: In Wildcard/Regex formats, the quotes must be passed literally (e.g., f '"abc"').
 
@@ -42,21 +42,22 @@ Arguments:
 
    SEARCH DIR MATRIX:
 
-   Goal           | Shorthand | Wildcard Format | Regex Format
+   Goal           | Shorthand | Wildcard Format | Regex Format (r:)
    ---------------|-----------|-----------------|------------------
-   Contains (Rel) | -         | "*abc*"         | "abc"
-   Contains (Abs) | -         | "/*abc*"        | "/abc/"
-   Exact (Rel)    | abc       | "abc"           | "^abc$"
-   Exact (Abs)    | /abc      | "/abc"          | "/^abc$/"
-   Starts (Rel)   | -         | "abc*"          | "^abc"
-   Starts (Abs)   | -         | "/abc*"         | "/^abc/"
-   Ends (Rel)     | -         | "*abc"          | "abc$"
-   Ends (Abs)     | -         | "/*abc"         | "/abc$/"
+   Contains (Rel) | -         | "*abc*"         | r:abc
+   Contains (Abs) | -         | "/*abc*"        | r:/abc/
+   Exact (Rel)    | abc       | "abc"           | r:^abc$
+   Exact (Abs)    | /abc      | "/abc"          | r:/^abc$/
+   Starts (Rel)   | -         | "abc*"          | r:^abc
+   Starts (Abs)   | -         | "/abc*"         | r:/^abc/
+   Ends (Rel)     | -         | "*abc"          | r:abc$
+   Ends (Abs)     | -         | "/*abc"         | r:/abc$/
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
+  - Prefix a pattern with r: to treat it as a regex (e.g., f r:^test).
 
 Options:
   --dir, -d
@@ -65,8 +66,6 @@ Options:
       Limit results to files.
   --full
       Match against the full absolute path instead of just the basename.
-  -r
-      Enable regex mode for search patterns.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
@@ -125,7 +124,11 @@ OUT_regex=""
 OUT_pathflag=""
 parse_name_pattern() {
   local raw="$1"
-  local use_regex="${2:-false}"
+  local use_regex=false
+  if [[ "$raw" == r:* ]]; then
+    use_regex=true
+    raw="${raw#r:}"
+  fi
   OUT_typeflag=""
   OUT_regex=""
   OUT_pathflag=""
@@ -161,6 +164,11 @@ parse_name_pattern() {
           OUT_regex="^$(to_regex_fragment "$inner")\$"
       fi
     fi
+    return 0
+  fi
+
+  if [[ "$use_regex" == "true" ]]; then
+    OUT_regex="$raw"
     return 0
   fi
 
@@ -202,13 +210,17 @@ SD_path=""
 SD_dir_regex=""
 parse_search_dir() {
   local raw="$1"
-  local use_regex="${2:-false}"
+  local use_regex=false
+  if [[ "$raw" == r:* ]]; then
+    use_regex=true
+    raw="${raw#r:}"
+  fi
   SD_mode=""
   SD_path=""
   SD_dir_regex=""
 
   # If it exists as a directory (relative or absolute), use it as a PATH.
-  if [[ -d "$raw" ]]; then
+  if [[ "$use_regex" == "false" && -d "$raw" ]]; then
     SD_mode="PATH"
     SD_path="$(cd "$raw" && pwd -P)"
     return 0
@@ -228,7 +240,7 @@ parse_search_dir() {
     inner="${inner%?}"
 
     # Path check for the inner content (Relative or Absolute)
-    if [[ -d "$inner" ]]; then
+    if [[ "$use_regex" == "false" && -d "$inner" ]]; then
       SD_mode="PATH"
       SD_path="$(cd "$inner" && pwd -P)"
       return 0
@@ -261,6 +273,11 @@ parse_search_dir() {
           SD_dir_regex="^$(to_regex_fragment "$pattern_inner")\$"
       fi
     fi
+    return 0
+  fi
+
+  if [[ "$use_regex" == "true" ]]; then
+    SD_dir_regex="$normalized"
     return 0
   fi
 
@@ -326,7 +343,6 @@ main() {
   local force_dir=false
   local force_file=false
   local force_full=false
-  local use_regex=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -352,10 +368,6 @@ main() {
         force_full=true
         shift
         ;;
-      -r)
-        use_regex=true
-        shift
-        ;;
       -h|--help)
         usage
         exit 0
@@ -379,7 +391,7 @@ main() {
     exit 2
   fi
 
-  parse_name_pattern "$1" "$use_regex"
+  parse_name_pattern "$1"
 
   if [[ "$force_full" == "true" ]]; then
     OUT_pathflag="--full-path"
@@ -398,7 +410,7 @@ main() {
   fi
 
   # Two args: <filename/dirname> <search_dir>
-  parse_search_dir "$2" "$use_regex"
+  parse_search_dir "$2"
 
   if [[ "$SD_mode" == "PATH" ]]; then
     run_fd "$SD_path" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag"
