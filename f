@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   local cols
-  cols=$(tput cols 2>/dev/null || echo 80)
+  cols=$(tput cols 2>/dev/null || echo 120)
   cat <<'EOF' | cut -c 1-"$cols"
 A parallel recursive file searcher
 
@@ -28,21 +28,16 @@ Arguments:
    Ends (File)    | -         | f "*abc" -f     | f -r "abc$" -f
    Ends (Rel)     | f abc/    | f "*abc" -d     | f -r "abc$" -d
 
-   The --full flag matches against the full absolute path instead of just
-   the basename.
+   The --full flag matches against the full absolute path instead of just the basename.
    Example: f --full "*/src/main.c"
    Example: f --full -r ".*/test/.*\.py$"
 
-   Note: In Wildcard/Regex formats, the quotes must be passed literally
-   (e.g., f '"abc"').
+   Note: In Wildcard/Regex formats, the quotes must be passed literally (e.g., f '"abc"').
 
    <search_dir>:
       Location to search. Behavior follows this priority:
-      1. Local/Absolute Path: If the path exists on disk, the search is limited
-         to that directory.
-      2. Global Pattern Match: If the path does not exist, the script searches
-         the ENTIRE disk for all directories matching the pattern (see matrix
-         below) and searches inside them.
+      1. Local/Absolute Path: If the path exists on disk, the search is limited to that directory.
+      2. Global Pattern Match: If the path does not exist, the script searches the ENTIRE disk for all directories matching the pattern (see matrix below) and searches inside them.
 
    SEARCH DIR MATRIX:
 
