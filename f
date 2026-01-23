@@ -47,13 +47,13 @@ Arguments:
    Goal           | Shorthand | Wildcard Format | Regex Format
    ---------------|-----------|-----------------|------------------
    Contains (Rel) | abc       | -               | -
-   Contains (Abs) | -         | "*abc*"         | "abc"
+   Contains (Abs) | -         | "/*abc*"        | "/abc/"
    Exact (Rel)    | ./abc/    | -               | -
-   Exact (Abs)    | /abc/     | "abc"           | "^abc$"
+   Exact (Abs)    | /abc/     | "/abc/"         | "/^abc$/"
    Starts (Rel)   | ./abc     | -               | -
-   Starts (Abs)   | /abc      | "abc*"          | "^abc"
+   Starts (Abs)   | /abc      | "/abc*"         | "/^abc/"
    Ends (Rel)     | abc/      | -               | -
-   Ends (Abs)     | -         | "*abc"          | "abc$"
+   Ends (Abs)     | -         | "/*abc"         | "/abc$/"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
 
@@ -123,6 +123,11 @@ parse_name_pattern() {
   if [[ ( "$raw" == '"'*'"' ) || ( "$raw" == "'"*"'" ) ]]; then
     local inner="${raw:1}"
     inner="${inner%?}"
+
+    # Strip leading/trailing slashes for basename patterns (unless it's just "/")
+    inner="${inner#/}"
+    [[ "$inner" != "/" ]] && inner="${inner%/}"
+
     if [[ "$use_regex" == "true" ]]; then
       OUT_regex="$inner"
     else
@@ -210,6 +215,11 @@ parse_search_dir() {
   if [[ ( "$raw" == '"'*'"' ) || ( "$raw" == "'"*"'" ) ]]; then
     local inner="${raw:1}"
     inner="${inner%?}"
+
+    # Strip leading/trailing slashes for basename patterns (unless it's just "/")
+    inner="${inner#/}"
+    [[ "$inner" != "/" ]] && inner="${inner%/}"
+
     if [[ "$use_regex" == "true" ]]; then
       SD_dir_regex="$inner"
     else
