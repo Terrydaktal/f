@@ -14,24 +14,24 @@ Usage:
 Arguments:
    SEARCH MATRIX:
 
-   Goal           | Shorthand | Wildcard Format | Regex Format (r:)
+   Goal           | Shorthand | Wildcard Format | Regex Format (r"")
    ---------------|-----------|-----------------|------------------
-   Contains (All) | f abc     | f "*abc*"       | f r:abc
-   Contains (File)| f abc -f  | f "*abc*" -f    | f r:abc -f
-   Contains (Dir) | f abc -d  | f "*abc*" -d    | f r:abc -d
-   Exact (All)    | -         | f "abc"         | f r:^abc$
-   Exact (File)   | -         | f "abc" -f      | f r:^abc$ -f
-   Exact (Dir)    | f /abc/   | f "abc" -d      | f r:^abc$ -d
-   Starts (All)   | f /abc    | f "abc*"        | f r:^abc
-   Starts (File)  | f /abc -f | f "abc*" -f     | f r:^abc -f
-   Starts (Dir)   | f /abc -d | f "abc*" -d     | f r:^abc -d
-   Ends (All)     | -         | f "*abc"        | f r:abc$
-   Ends (File)    | -         | f "*abc" -f     | f r:abc$ -f
-   Ends (Dir)     | f abc/    | f "*abc" -d     | f r:abc$ -d
+   Contains (All) | f abc     | f "*abc*"       | f r"abc"
+   Contains (File)| f abc -f  | f "*abc*" -f    | f r"abc" -f
+   Contains (Dir) | f abc -d  | f "*abc*" -d    | f r"abc" -d
+   Exact (All)    | -         | f "abc"         | f r"^abc$"
+   Exact (File)   | -         | f "abc" -f      | f r"^abc$" -f
+   Exact (Dir)    | f /abc/   | f "abc" -d      | f r"^abc$" -d
+   Starts (All)   | f /abc    | f "abc*"        | f r"^abc"
+   Starts (File)  | f /abc -f | f "abc*" -f     | f r"^abc" -f
+   Starts (Dir)   | f /abc -d | f "abc*" -d     | f r"^abc" -d
+   Ends (All)     | -         | f "*abc"        | f r"abc$"
+   Ends (File)    | -         | f "*abc" -f     | f r"abc$" -f
+   Ends (Dir)     | f abc/    | f "*abc" -d     | f r"abc$" -d
 
    The --full flag matches against the full absolute path instead of just the basename.
    Example: f --full "*/src/main.c"
-   Example: f --full r:.*/test/.*\.py$
+   Example: f --full r".*/test/.*\.py$"
 
    Note: In Wildcard/Regex formats, the quotes must be passed literally (e.g., f '"abc"').
 
@@ -42,22 +42,22 @@ Arguments:
 
    SEARCH DIR MATRIX:
 
-   Goal           | Shorthand | Wildcard Format | Regex Format (r:)
+   Goal           | Shorthand | Wildcard Format | Regex Format (r"")
    ---------------|-----------|-----------------|------------------
-   Contains (Rel) | -         | "*abc*"         | r:abc
-   Contains (Abs) | -         | "/*abc*"        | r:/abc/
-   Exact (Rel)    | abc       | "abc"           | r:^abc$
-   Exact (Abs)    | /abc      | "/abc"          | r:/^abc$/
-   Starts (Rel)   | -         | "abc*"          | r:^abc
-   Starts (Abs)   | -         | "/abc*"         | r:/^abc/
-   Ends (Rel)     | -         | "*abc"          | r:abc$
-   Ends (Abs)     | -         | "/*abc"         | r:/abc$/
+   Contains (Rel) | -         | "*abc*"         | r"abc"
+   Contains (Abs) | -         | "/*abc*"        | r"/abc/"
+   Exact (Rel)    | abc       | "abc"           | r"^abc$"
+   Exact (Abs)    | /abc      | "/abc"          | r"/^abc$/"
+   Starts (Rel)   | -         | "abc*"          | r"^abc"
+   Starts (Abs)   | -         | "/abc*"         | r"/^abc/"
+   Ends (Rel)     | -         | "*abc"          | r"abc$"
+   Ends (Abs)     | -         | "/*abc"         | r"/abc$/"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
-  - Prefix a pattern with r: to treat it as a regex (e.g., f r:^test).
+  - Prefix a pattern with r and wrap in quotes to treat it as a regex (e.g., f r"^test").
 
 Options:
   --dir, -d
@@ -125,9 +125,9 @@ OUT_pathflag=""
 parse_name_pattern() {
   local raw="$1"
   local use_regex=false
-  if [[ "$raw" == r:* ]]; then
+  if [[ "$raw" == r'"'*'"' || "$raw" == r"'"* "'" ]]; then
     use_regex=true
-    raw="${raw#r:}"
+    raw="${raw:1}"
   fi
   OUT_typeflag=""
   OUT_regex=""
@@ -211,9 +211,9 @@ SD_dir_regex=""
 parse_search_dir() {
   local raw="$1"
   local use_regex=false
-  if [[ "$raw" == r:* ]]; then
+  if [[ "$raw" == r'"'*'"' || "$raw" == r"'"* "'" ]]; then
     use_regex=true
-    raw="${raw#r:}"
+    raw="${raw:1}"
   fi
   SD_mode=""
   SD_path=""
