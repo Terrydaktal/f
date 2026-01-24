@@ -36,9 +36,14 @@ Arguments:
    Ends (Dir)     | f abc/    | f "*abc" -d     | f r"abc$" -d
 
    <search_dir>:
-      Location to search. Behavior follows this priority:
-      1. Local/Absolute Path: If the path exists on disk, the search is limited to that directory.
-      2. Global Pattern Match: If the path does not exist, the script searches the ENTIRE disk for all directories matching the pattern (see matrix below) and searches inside them.
+      Location to search. Defaults to '.' (the current directory).
+      Behavior follows this priority:
+      1. Local/Absolute Path: If the path exists on disk (e.g., '.', '/', or
+         a specific path), the search is limited to that directory and will
+         not fallback to a global search.
+      2. Global Pattern Match: If the path does not exist, the script
+         searches the ENTIRE disk for all directories matching the pattern
+         (see matrix below) and searches inside them.
 
    SEARCH DIR MATRIX:
 
