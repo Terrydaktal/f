@@ -76,6 +76,8 @@ Options:
       Limit results to files.
   --full
       Match against the full absolute path instead of just the basename.
+  --no-ignore, -I
+      Show files and directories that are ignored by .gitignore, etc.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
@@ -90,6 +92,7 @@ EOF
 timeout_dur="6s"
 kill_after="2s"
 FORCE_PATTERN_MODE=false
+NO_IGNORE="--no-ignore"
 
 # Exclude pseudo-filesystems that are usually noise / expensive
 FD_EXCLUDES=(--exclude proc --exclude sys --exclude dev --exclude run)
@@ -338,13 +341,13 @@ run_fd() {
   local pathflag="${4:-}"
 
   timeout --preserve-status --kill-after="$kill_after" "$timeout_dur" \
-    fd --hidden -i "${FD_EXCLUDES[@]}" $typeflag $pathflag --regex "$rx" "$root"
+    fd --hidden $NO_IGNORE -i "${FD_EXCLUDES[@]}" $typeflag $pathflag --regex "$rx" "$root"
 }
 
 find_dirs_anywhere_nul() {
   # Emits NUL-delimited directories anywhere under / whose basename matches SD_dir_regex
   timeout --preserve-status --kill-after="$kill_after" "$timeout_dur" \
-    fd --hidden -i "${FD_EXCLUDES[@]}" --type d --regex "$SD_dir_regex" "/" -0
+    fd --hidden $NO_IGNORE -i "${FD_EXCLUDES[@]}" --type d --regex "$SD_dir_regex" "/" -0
 }
 
 prune_children() {
@@ -396,6 +399,10 @@ main() {
         ;;
       --full)
         force_full=true
+        shift
+        ;;
+      --no-ignore|-I)
+        NO_IGNORE="--no-ignore"
         shift
         ;;
       --bypass|-b)
