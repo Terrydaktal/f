@@ -76,6 +76,8 @@ Options:
       Limit results to files.
   --full
       Match against the full absolute path instead of just the basename.
+  --info
+      Show the date of last modification and size at the start of each line.
   --no-ignore, -I
       Show files and directories that are ignored by .gitignore, etc.
   --timeout N
@@ -92,7 +94,15 @@ EOF
 timeout_dur="6s"
 kill_after="2s"
 FORCE_PATTERN_MODE=false
+SHOW_INFO=false
 NO_IGNORE="--no-ignore"
+
+# Detect if stdout is a TTY
+if [ -t 1 ]; then
+  IS_TTY=true
+else
+  IS_TTY=false
+fi
 
 # Exclude pseudo-filesystems that are usually noise / expensive
 FD_EXCLUDES=(--exclude proc --exclude sys --exclude dev --exclude run)
@@ -340,8 +350,15 @@ run_fd() {
   local rx="$3"
   local pathflag="${4:-}"
 
+  local color_opt=""
+  # Force color if output is a TTY.
+  # If showing info, we handle color stripping in the transform.
+  if [[ "$IS_TTY" == "true" ]]; then
+    color_opt="--color=always"
+  fi
+
   timeout --preserve-status --kill-after="$kill_after" "$timeout_dur" \
-    fd --hidden $NO_IGNORE -i "${FD_EXCLUDES[@]}" $typeflag $pathflag --regex "$rx" "$root"
+    fd $color_opt --hidden $NO_IGNORE -i "${FD_EXCLUDES[@]}" $typeflag $pathflag --regex "$rx" "$root"
 }
 
 find_dirs_anywhere_nul() {
@@ -365,6 +382,35 @@ prune_children() {
     print $0
     last = $0
   }'
+}
+
+add_info_transform() {
+  if [[ "$SHOW_INFO" != "true" ]]; then
+    cat
+    return
+  fi
+
+  while IFS= read -r line; do
+    # Strip ANSI escape codes to get the clean file path for stat
+    # (Matches \e[...m)
+    local clean_path
+    clean_path=$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')
+
+    # Get date and size
+    # stat -c "%y %s" -> YYYY-MM-DD HH:MM:SS.NNN TZ SIZE
+    local stat_out
+    stat_out=$(stat -c "%y %s" "$clean_path" 2>/dev/null || true)
+
+    if [[ -n "$stat_out" ]]; then
+      # Extract just YYYY-MM-DD and SIZE
+      # Pattern: ^(YYYY-MM-DD) ... (SIZE)$
+      # Cut or sed.
+      # sed 's/^\([0-9-]*\) .* \([0-9]*\)$/\1 \2/'
+      local info
+      info=$(echo "$stat_out" | sed 's/^\([0-9-]*\) .* \([0-9]*\)$/\1 \2/')
+      echo "$info $line"
+    fi
+  done
 }
 
 # ----------------------------
@@ -407,6 +453,10 @@ main() {
         ;;
       --bypass|-b)
         FORCE_PATTERN_MODE=true
+        shift
+        ;;
+      --info)
+        SHOW_INFO=true
         shift
         ;;
       -h|--help)
@@ -492,7 +542,7 @@ main() {
       } \
       | sort \
       | prune_children
-    )
+    ) | add_info_transform
 
     exit 0
   fi
@@ -514,7 +564,7 @@ main() {
   fi
 
   if [[ $# -eq 1 ]]; then
-    run_fd "." "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag"
+    run_fd "." "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag" | add_info_transform
     exit 0
   fi
 
@@ -522,7 +572,7 @@ main() {
   parse_search_dir "$2"
 
   if [[ "$SD_mode" == "PATH" ]]; then
-    run_fd "$SD_path" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag"
+    run_fd "$SD_path" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag" | add_info_transform
     exit 0
   fi
 
@@ -530,7 +580,7 @@ main() {
   # IMPORTANT: consume NUL-delimited output via read -d '' (no command substitution).
   find_dirs_anywhere_nul | while IFS= read -r -d '' d; do
     run_fd "$d" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag" || true
-  done
+  done | awk '!seen[$0]++ { print; fflush() }' | add_info_transform
 }
 
 main "$@"

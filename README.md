@@ -76,6 +76,8 @@ Options:
       Limit results to files.
   --full
       Match against the full absolute path instead of just the basename.
+  --info
+      Show the date of last modification and size at the start of each line.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
