@@ -5,7 +5,7 @@ A parallel recursive file searcher
 
 Usage:
   f <filename/dirname> [<search_dir>]
-  f --full <pattern1>  [<pattern2> <pattern3>...]
+  f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
                        [--dir|-d] [--file|-f] [--bypass|-b] [--timeout N]
 
 Arguments:
@@ -74,9 +74,9 @@ Options:
       Limit results to directories.
   --file, -f
       Limit results to files.
-  --full
+  --full, -F
       Match against the full absolute path instead of just the basename.
-  --info
+  --info, -i
       Show the date of last modification and size at the start of each line.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s

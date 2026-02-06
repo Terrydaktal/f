@@ -10,7 +10,7 @@ A parallel recursive file searcher
 
 Usage:
   f <filename/dirname> [<search_dir>]
-  f --full <pattern1>  [<pattern2> <pattern3>...]   
+  f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
                        [--dir|-d] [--file|-f] [--bypass|-b] [--timeout N]
 
 Arguments:
@@ -74,9 +74,9 @@ Options:
       Limit results to directories.
   --file, -f
       Limit results to files.
-  --full
+  --full, -F
       Match against the full absolute path instead of just the basename.
-  --info
+  --info, -i
       Show the date of last modification and size at the start of each line.
   --no-ignore, -I
       Show files and directories that are ignored by .gitignore, etc.
@@ -417,7 +417,7 @@ add_info_transform() {
 # Main
 # ----------------------------
 main() {
-  # Allow --timeout, --dir/-d, --full/-f anywhere
+  # Allow --timeout, --dir/-d, --full/-F anywhere
   local positional=()
   local force_dir=false
   local force_file=false
@@ -443,7 +443,7 @@ main() {
         force_file=true
         shift
         ;;
-      --full)
+      --full|-F)
         force_full=true
         shift
         ;;
@@ -455,7 +455,7 @@ main() {
         FORCE_PATTERN_MODE=true
         shift
         ;;
-      --info)
+      --info|-i)
         SHOW_INFO=true
         shift
         ;;
