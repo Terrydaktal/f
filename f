@@ -74,6 +74,9 @@ Options:
       Limit results to directories.
   --file, -f
       Limit results to files.
+  --audit
+      Show an overview of matches by folder (folder path + count), instead of
+      listing every matching file.
   --full, -F
       Match against the full absolute path instead of just the basename.
   --info, -i
@@ -95,6 +98,7 @@ timeout_dur="6s"
 kill_after="2s"
 FORCE_PATTERN_MODE=false
 SHOW_INFO=false
+AUDIT=false
 NO_IGNORE="--no-ignore"
 
 # Detect if stdout is a TTY
@@ -413,6 +417,51 @@ add_info_transform() {
   done
 }
 
+audit_summary_transform() {
+  # Summarize matches as: <count> <folder>
+  # - strips ANSI colors
+  # - strips optional "YYYY-MM-DD SIZE " info prefix (from --info)
+  # - normalizes directory matches by removing trailing "/"
+  if [[ "$IS_TTY" == "true" ]]; then
+    printf '%7s  %s\n' "COUNT" "FOLDER"
+  fi
+
+  awk '
+    {
+      line=$0
+      gsub(/\x1b\[[0-9;]*m/, "", line)
+      sub(/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]+ /, "", line)
+
+      p=line
+      sub(/\/$/, "", p)
+
+      d=p
+      if (match(d, /\//)) {
+        sub(/\/[^\/]+$/, "", d)
+        if (d == "") d="/"
+      } else {
+        d="."
+      }
+      counts[d]++
+    }
+    END {
+      for (d in counts) {
+        printf "%d\t%s\n", counts[d], d
+      }
+    }
+  ' \
+  | sort -nr -k1,1 -k2,2 \
+  | awk -F"\t" '{ printf "%7d  %s\n", $1, $2 }'
+}
+
+final_transform() {
+  if [[ "$AUDIT" == "true" ]]; then
+    audit_summary_transform
+  else
+    add_info_transform
+  fi
+}
+
 # ----------------------------
 # Main
 # ----------------------------
@@ -457,6 +506,10 @@ main() {
         ;;
       --info|-i)
         SHOW_INFO=true
+        shift
+        ;;
+      --audit)
+        AUDIT=true
         shift
         ;;
       -h|--help)
@@ -542,7 +595,7 @@ main() {
       } \
       | sort \
       | prune_children
-    ) | add_info_transform
+    ) | final_transform
 
     exit 0
   fi
@@ -564,7 +617,7 @@ main() {
   fi
 
   if [[ $# -eq 1 ]]; then
-    run_fd "." "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag" | add_info_transform
+    run_fd "." "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag" | final_transform
     exit 0
   fi
 
@@ -572,7 +625,7 @@ main() {
   parse_search_dir "$2"
 
   if [[ "$SD_mode" == "PATH" ]]; then
-    run_fd "$SD_path" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag" | add_info_transform
+    run_fd "$SD_path" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag" | final_transform
     exit 0
   fi
 
@@ -580,7 +633,7 @@ main() {
   # IMPORTANT: consume NUL-delimited output via read -d '' (no command substitution).
   find_dirs_anywhere_nul | while IFS= read -r -d '' d; do
     run_fd "$d" "$OUT_typeflag" "$OUT_regex" "$OUT_pathflag" || true
-  done | awk '!seen[$0]++ { print; fflush() }' | add_info_transform
+  done | awk '!seen[$0]++ { print; fflush() }' | final_transform
 }
 
 main "$@"

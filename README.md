@@ -74,6 +74,9 @@ Options:
       Limit results to directories.
   --file, -f
       Limit results to files.
+  --audit
+      Show an overview of matches by folder (folder path + count), instead of
+      listing every matching file.
   --full, -F
       Match against the full absolute path instead of just the basename.
   --info, -i
