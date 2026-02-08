@@ -79,6 +79,7 @@ Options:
       of listing every matching file. If a directory itself matches, it counts
       as 1 match for its parent folder. Note: --info does not change --counts
       output.
+      Renamed from --audit (which is no longer accepted).
   --full, -F
       Match against the full absolute path instead of just the basename.
   --info, -i
