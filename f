@@ -515,9 +515,8 @@ main() {
         shift
         ;;
       --audit)
-        # Back-compat alias for --counts
-        COUNTS=true
-        shift
+        echo "f: --audit was renamed to --counts" >&2
+        exit 2
         ;;
       -h|--help)
         usage
