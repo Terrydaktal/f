@@ -74,10 +74,10 @@ Options:
       Limit results to directories.
   --file, -f
       Limit results to files.
-  --audit
+  --counts
       Show a summary of matches by parent folder (folder path + count), instead
       of listing every matching file. If a directory itself matches, it counts
-      as 1 match for its parent folder. Note: --info does not change --audit
+      as 1 match for its parent folder. Note: --info does not change --counts
       output.
   --full, -F
       Match against the full absolute path instead of just the basename.
@@ -100,7 +100,7 @@ timeout_dur="6s"
 kill_after="2s"
 FORCE_PATTERN_MODE=false
 SHOW_INFO=false
-AUDIT=false
+COUNTS=false
 NO_IGNORE="--no-ignore"
 
 # Detect if stdout is a TTY
@@ -419,7 +419,7 @@ add_info_transform() {
   done
 }
 
-audit_summary_transform() {
+counts_summary_transform() {
   # Summarize matches as: <count> <folder>
   # - strips ANSI colors
   # - strips optional "YYYY-MM-DD SIZE " info prefix (from --info)
@@ -457,8 +457,8 @@ audit_summary_transform() {
 }
 
 final_transform() {
-  if [[ "$AUDIT" == "true" ]]; then
-    audit_summary_transform
+  if [[ "$COUNTS" == "true" ]]; then
+    counts_summary_transform
   else
     add_info_transform
   fi
@@ -510,8 +510,13 @@ main() {
         SHOW_INFO=true
         shift
         ;;
+      --counts)
+        COUNTS=true
+        shift
+        ;;
       --audit)
-        AUDIT=true
+        # Back-compat alias for --counts
+        COUNTS=true
         shift
         ;;
       -h|--help)

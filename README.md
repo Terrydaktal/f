@@ -74,10 +74,10 @@ Options:
       Limit results to directories.
   --file, -f
       Limit results to files.
-  --audit
+  --counts
       Show a summary of matches by parent folder (folder path + count), instead
       of listing every matching file. If a directory itself matches, it counts
-      as 1 match for its parent folder. Note: --info does not change --audit
+      as 1 match for its parent folder. Note: --info does not change --counts
       output.
   --full, -F
       Match against the full absolute path instead of just the basename.
