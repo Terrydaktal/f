@@ -148,6 +148,41 @@ to_regex_fragment() {
   printf '%s' "$s"
 }
 
+wildcard_to_regex() {
+  # Convert a glob-ish pattern to a regex with sensible anchoring:
+  # - "word*"  => starts-with
+  # - "*word"  => ends-with
+  # - "*word*" => contains
+  # - "word"   => exact
+  #
+  # We only look at leading/trailing '*' for anchoring; internal '*' are handled
+  # by to_regex_fragment().
+  local pat="$1"
+  local lead_star=false
+  local trail_star=false
+
+  if [[ "${pat:0:1}" == "*" ]]; then
+    lead_star=true
+  fi
+
+  if [[ "${pat: -1}" == "*" ]]; then
+    # Treat a trailing "\*" as a literal star, not a wildcard.
+    if [[ ${#pat} -lt 2 || "${pat: -2:1}" != "\\" ]]; then
+      trail_star=true
+    fi
+  fi
+
+  local rx
+  rx="$(to_regex_fragment "$pat")"
+  if [[ "$lead_star" != "true" ]]; then
+    rx="^$rx"
+  fi
+  if [[ "$trail_star" != "true" ]]; then
+    rx="${rx}\$"
+  fi
+  printf '%s' "$rx"
+}
+
 # Parse <filename/dirname> into:
 #   OUT_typeflag: "" or "--type d"
 #   OUT_regex: regex for fd --regex
@@ -178,24 +213,7 @@ parse_name_pattern() {
     if [[ "$use_regex" == "true" ]]; then
       OUT_regex="$inner"
     else
-      # Wildcard mode inside quotes
-      if [[ "$inner" == "*"*"*" ]]; then
-          # *foo* -> contains
-          local frag="${inner#\*}"
-          frag="${frag%\*}"
-          OUT_regex="$(to_regex_fragment "$frag")"
-      elif [[ "$inner" == "*"* ]]; then
-          # *foo -> ends with
-          local frag="${inner#\*}"
-          OUT_regex="$(to_regex_fragment "$frag")\$"
-      elif [[ "$inner" == *"*" ]]; then
-          # foo* -> starts with
-          local frag="${inner%\*}"
-          OUT_regex="^$(to_regex_fragment "$frag")"
-      else
-          # foo -> exact match
-          OUT_regex="^$(to_regex_fragment "$inner")\$"
-      fi
+      OUT_regex="$(wildcard_to_regex "$inner")"
     fi
     return 0
   fi
@@ -227,6 +245,12 @@ parse_name_pattern() {
     OUT_typeflag="--type d"
     local no_slash="${raw%/}"
     OUT_regex="$(to_regex_fragment "$no_slash")\$"
+    return 0
+  fi
+
+  # Wildcard semantics when the user provided '*' (e.g. "*.deb" => ends-with ".deb")
+  if [[ "$raw" == *\** ]]; then
+    OUT_regex="$(wildcard_to_regex "$raw")"
     return 0
   fi
 
@@ -287,24 +311,7 @@ parse_search_dir() {
     if [[ "$use_regex" == "true" ]]; then
       SD_dir_regex="$pattern_inner"
     else
-      # Wildcard mode inside quotes
-      if [[ "$pattern_inner" == "*"*"*" ]]; then
-          # *foo* -> contains
-          local frag="${pattern_inner#\*}"
-          frag="${frag%\*}"
-          SD_dir_regex="$(to_regex_fragment "$frag")"
-      elif [[ "$pattern_inner" == "*"* ]]; then
-          # *foo -> ends with
-          local frag="${pattern_inner#\*}"
-          SD_dir_regex="$(to_regex_fragment "$frag")\$"
-      elif [[ "$pattern_inner" == *"*" ]]; then
-          # foo* -> starts with
-          local frag="${pattern_inner%\*}"
-          SD_dir_regex="^$(to_regex_fragment "$frag")"
-      else
-          # foo -> exact match
-          SD_dir_regex="^$(to_regex_fragment "$pattern_inner")\$"
-      fi
+      SD_dir_regex="$(wildcard_to_regex "$pattern_inner")"
     fi
     return 0
   fi
@@ -344,6 +351,12 @@ parse_search_dir() {
       local frag="${raw%/}"
       SD_dir_regex="$(to_regex_fragment "$frag")\$"
       return 0
+  fi
+
+  # Wildcard semantics when the user provided '*'
+  if [[ "$normalized" == *\** ]]; then
+    SD_dir_regex="$(wildcard_to_regex "$normalized")"
+    return 0
   fi
 
   # Default: contains (Rel)
