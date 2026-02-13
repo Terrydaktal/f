@@ -22,12 +22,12 @@ Arguments:
 
    Goal           | Shorthand | Wildcard Format | Regex Format (r"")
    ---------------|-----------|-----------------|------------------
-   Contains (All) | f abc     | f "*abc*"       | f r"abc"
-   Contains (File)| f abc -f  | f "*abc*" -f    | f r"abc" -f
-   Contains (Dir) | f abc -d  | f "*abc*" -d    | f r"abc" -d
-   Exact (All)    | -         | f "abc"         | f r"^abc$"
-   Exact (File)   | -         | f "abc" -f      | f r"^abc$" -f
+   Exact (All)    | f abc     | f "abc"         | f r"^abc$"
+   Exact (File)   | f abc -f  | f "abc" -f      | f r"^abc$" -f
    Exact (Dir)    | f /abc/   | f "abc" -d      | f r"^abc$" -d
+   Contains (All) | -         | f "*abc*"       | f r"abc"
+   Contains (File)| -         | f "*abc*" -f    | f r"abc" -f
+   Contains (Dir) | -         | f "*abc*" -d    | f r"abc" -d
    Starts (All)   | f /abc    | f "abc*"        | f r"^abc"
    Starts (File)  | f /abc -f | f "abc*" -f     | f r"^abc" -f
    Starts (Dir)   | f /abc -d | f "abc*" -d     | f r"^abc" -d
@@ -62,8 +62,6 @@ Arguments:
    
    Example: f --full "src" "main"   # Matches BOTH (hides children)
    Example: f --full "test"         # Returns /path/to/test, but hides /path/to/test/file
-
-   Note: In Wildcard/Regex formats, the quotes must be passed literally (e.g., f '"abc"').
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
@@ -254,8 +252,8 @@ parse_name_pattern() {
     return 0
   fi
 
-  # Default: contains
-  OUT_regex="$(to_regex_fragment "$raw")"
+  # Default: exact match for name patterns.
+  OUT_regex="^$(to_regex_fragment "$raw")\$"
 }
 
 # Parse <search_dir> into:
