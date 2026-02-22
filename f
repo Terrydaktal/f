@@ -11,7 +11,8 @@ A parallel recursive file searcher
 Usage:
   f <filename/dirname> [<search_dir>]
   f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
-                       [--dir|-d] [--file|-f] [--bypass|-b] [--timeout N]
+                       [--dir|-d] [--file|-f] [--exact|-e]
+                       [--bypass|-b] [--timeout N]
 
 Arguments:
    <filename/dirname>:
@@ -22,12 +23,12 @@ Arguments:
 
    Goal           | Shorthand | Wildcard Format | Regex Format (r"")
    ---------------|-----------|-----------------|------------------
-   Contains (All) | f abc     | f "*abc*"       | f r"abc"
-   Contains (File)| f abc -f  | f "*abc*" -f    | f r"abc" -f
-   Contains (Dir) | f abc -d  | f "*abc*" -d    | f r"abc" -d
-   Exact (All)    | -         | f "abc"         | f r"^abc$"
-   Exact (File)   | -         | f "abc" -f      | f r"^abc$" -f
-   Exact (Dir)    | f /abc/   | f "abc" -d      | f r"^abc$" -d
+   Contains (All) | f abc      | f "*abc*"       | f r"abc"
+   Contains (File)| f abc -f   | f "*abc*" -f    | f r"abc" -f
+   Contains (Dir) | f abc -d   | f "*abc*" -d    | f r"abc" -d
+   Exact (All)    | f -e abc   | f '"abc"'       | f r"^abc$"
+   Exact (File)   | f -e abc -f| f '"abc"' -f    | f r"^abc$" -f
+   Exact (Dir)    | f /abc/    | f '"abc"' -d    | f r"^abc$" -d
    Starts (All)   | f /abc    | f "abc*"        | f r"^abc"
    Starts (File)  | f /abc -f | f "abc*" -f     | f r"^abc" -f
    Starts (Dir)   | f /abc -d | f "abc*" -d     | f r"^abc" -d
@@ -66,6 +67,7 @@ Arguments:
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
   - Prefix a pattern with r and wrap in quotes to treat it as a regex (e.g., f r"^test").
+  - Shell quotes are not visible to scripts. Use --exact/-e for exact basename matches.
 
 Options:
   --dir, -d
@@ -78,6 +80,9 @@ Options:
       as 1 match for its parent folder. Note: --info does not change --counts
       output.
       Renamed from --audit (which is no longer accepted).
+  --exact, -e
+      Match plain basename input exactly (e.g., f -e alex). Without --exact,
+      plain patterns use contains matching.
   --full, -F
       Match against the full absolute path instead of just the basename.
   --info, -i
@@ -100,6 +105,7 @@ kill_after="2s"
 FORCE_PATTERN_MODE=false
 SHOW_INFO=false
 COUNTS=false
+FORCE_EXACT=false
 NO_IGNORE="--no-ignore"
 
 # Detect if stdout is a TTY
@@ -218,6 +224,12 @@ parse_name_pattern() {
 
   if [[ "$use_regex" == "true" ]]; then
     OUT_regex="$raw"
+    return 0
+  fi
+
+  # Exact mode for plain basename patterns.
+  if [[ "$FORCE_EXACT" == "true" && "$raw" != *\** && "$raw" != /* && ! ( "$raw" != "/" && "$raw" == */ ) ]]; then
+    OUT_regex="^$(to_regex_fragment "$raw")\$"
     return 0
   fi
 
@@ -504,6 +516,10 @@ main() {
         ;;
       --file|-f)
         force_file=true
+        shift
+        ;;
+      --exact|-e)
+        FORCE_EXACT=true
         shift
         ;;
       --full|-F)
