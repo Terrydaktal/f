@@ -51,26 +51,23 @@ want_ends_d=$'abc/\nxabc/'
 want_exact_d='abc/'
 
 # SEARCH MATRIX: contains
-assert_eq "contains all (shorthand files)" "$(list_rel "$FILE_ROOT" abc)" "$want_contains"
 assert_eq "contains all (wildcard files)" "$(list_rel "$FILE_ROOT" '*abc*')" "$want_contains"
 assert_eq "contains all (regex files)" "$(list_rel "$FILE_ROOT" 'r"abc"')" "$want_contains"
-assert_eq "contains file (shorthand)" "$(list_rel "$FILE_ROOT" abc -f)" "$want_contains"
 assert_eq "contains file (wildcard)" "$(list_rel "$FILE_ROOT" '*abc*' -f)" "$want_contains"
 assert_eq "contains file (regex)" "$(list_rel "$FILE_ROOT" 'r"abc"' -f)" "$want_contains"
-assert_eq "contains all (shorthand dirs)" "$(list_rel "$DIR_ROOT" abc)" "$want_contains_d"
 assert_eq "contains all (wildcard dirs)" "$(list_rel "$DIR_ROOT" '*abc*')" "$want_contains_d"
 assert_eq "contains all (regex dirs)" "$(list_rel "$DIR_ROOT" 'r"abc"')" "$want_contains_d"
-assert_eq "contains dir (shorthand)" "$(list_rel "$DIR_ROOT" abc -d)" "$want_contains_d"
 assert_eq "contains dir (wildcard)" "$(list_rel "$DIR_ROOT" '*abc*' -d)" "$want_contains_d"
 assert_eq "contains dir (regex)" "$(list_rel "$DIR_ROOT" 'r"abc"' -d)" "$want_contains_d"
 
 # SEARCH MATRIX: exact
-assert_eq "exact all (shorthand files)" "$(list_rel "$FILE_ROOT" -e abc)" "$want_exact"
+assert_eq "exact all (shorthand files)" "$(list_rel "$FILE_ROOT" abc)" "$want_exact"
 assert_eq "exact all (wildcard format files)" "$(list_rel "$FILE_ROOT" '"abc"')" "$want_exact"
 assert_eq "exact all (regex files)" "$(list_rel "$FILE_ROOT" 'r"^abc$"')" "$want_exact"
-assert_eq "exact file (shorthand)" "$(list_rel "$FILE_ROOT" -e abc -f)" "$want_exact"
+assert_eq "exact file (shorthand)" "$(list_rel "$FILE_ROOT" abc -f)" "$want_exact"
 assert_eq "exact file (wildcard format)" "$(list_rel "$FILE_ROOT" '"abc"' -f)" "$want_exact"
 assert_eq "exact file (regex)" "$(list_rel "$FILE_ROOT" 'r"^abc$"' -f)" "$want_exact"
+assert_eq "exact all (shorthand dirs)" "$(list_rel "$DIR_ROOT" abc)" "$want_exact_d"
 assert_eq "exact all (wildcard format dirs)" "$(list_rel "$DIR_ROOT" '"abc"')" "$want_exact_d"
 assert_eq "exact all (regex dirs)" "$(list_rel "$DIR_ROOT" 'r"^abc$"')" "$want_exact_d"
 assert_eq "exact dir (shorthand)" "$(list_rel "$DIR_ROOT" /abc/)" "$want_exact_d"
