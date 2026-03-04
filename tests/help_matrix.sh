@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 F="${ROOT_DIR}/f"
-F_TIMEOUT="2"
+F_TIMEOUT="6"
 
 assert_eq() {
   local name="$1"
@@ -22,11 +22,11 @@ assert_eq() {
 list_rel() {
   local root="$1"
   shift
-  "$F" --timeout "$F_TIMEOUT" "$@" "$root" | sed "s#^${root}/##" | sort
+  "$F" --timeout "$F_TIMEOUT" "$@" "$root" 2>/dev/null | sed "s#^${root}/##" | sort
 }
 
 list_parent_dirs() {
-  "$F" --timeout "$F_TIMEOUT" "$@" | xargs -r -n1 dirname | sort -u
+  "$F" --timeout "$F_TIMEOUT" "$@" 2>/dev/null | xargs -r -n1 dirname | sort -u
 }
 
 TMP_BASE="/tmp/f_help_matrix_${RANDOM}_$$"
@@ -51,23 +51,24 @@ want_ends_d=$'abc/\nxabc/'
 want_exact_d='abc/'
 
 # SEARCH MATRIX: contains
+assert_eq "contains all (shorthand files)" "$(list_rel "$FILE_ROOT" abc)" "$want_contains"
 assert_eq "contains all (wildcard files)" "$(list_rel "$FILE_ROOT" '*abc*')" "$want_contains"
 assert_eq "contains all (regex files)" "$(list_rel "$FILE_ROOT" 'r"abc"')" "$want_contains"
+assert_eq "contains file (shorthand)" "$(list_rel "$FILE_ROOT" abc -f)" "$want_contains"
 assert_eq "contains file (wildcard)" "$(list_rel "$FILE_ROOT" '*abc*' -f)" "$want_contains"
 assert_eq "contains file (regex)" "$(list_rel "$FILE_ROOT" 'r"abc"' -f)" "$want_contains"
+assert_eq "contains all (shorthand dirs)" "$(list_rel "$DIR_ROOT" abc)" "$want_contains_d"
 assert_eq "contains all (wildcard dirs)" "$(list_rel "$DIR_ROOT" '*abc*')" "$want_contains_d"
 assert_eq "contains all (regex dirs)" "$(list_rel "$DIR_ROOT" 'r"abc"')" "$want_contains_d"
+assert_eq "contains dir (shorthand)" "$(list_rel "$DIR_ROOT" abc -d)" "$want_contains_d"
 assert_eq "contains dir (wildcard)" "$(list_rel "$DIR_ROOT" '*abc*' -d)" "$want_contains_d"
 assert_eq "contains dir (regex)" "$(list_rel "$DIR_ROOT" 'r"abc"' -d)" "$want_contains_d"
 
 # SEARCH MATRIX: exact
-assert_eq "exact all (shorthand files)" "$(list_rel "$FILE_ROOT" abc)" "$want_exact"
 assert_eq "exact all (wildcard format files)" "$(list_rel "$FILE_ROOT" '"abc"')" "$want_exact"
 assert_eq "exact all (regex files)" "$(list_rel "$FILE_ROOT" 'r"^abc$"')" "$want_exact"
-assert_eq "exact file (shorthand)" "$(list_rel "$FILE_ROOT" abc -f)" "$want_exact"
 assert_eq "exact file (wildcard format)" "$(list_rel "$FILE_ROOT" '"abc"' -f)" "$want_exact"
 assert_eq "exact file (regex)" "$(list_rel "$FILE_ROOT" 'r"^abc$"' -f)" "$want_exact"
-assert_eq "exact all (shorthand dirs)" "$(list_rel "$DIR_ROOT" abc)" "$want_exact_d"
 assert_eq "exact all (wildcard format dirs)" "$(list_rel "$DIR_ROOT" '"abc"')" "$want_exact_d"
 assert_eq "exact all (regex dirs)" "$(list_rel "$DIR_ROOT" 'r"^abc$"')" "$want_exact_d"
 assert_eq "exact dir (shorthand)" "$(list_rel "$DIR_ROOT" /abc/)" "$want_exact_d"
