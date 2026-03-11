@@ -26,9 +26,9 @@ Arguments:
    Contains (All) | f abc      | f "*abc*"       | f r"abc"
    Contains (File)| f abc -f   | f "*abc*" -f    | f r"abc" -f
    Contains (Dir) | f abc -d   | f "*abc*" -d    | f r"abc" -d
-   Exact (All)    | -          | f "abc"         | f r"^abc$"
-   Exact (File)   | -          | f "abc" -f      | f r"^abc$" -f
-   Exact (Dir)    | f /abc/    | f "abc" -d      | f r"^abc$" -d
+   Exact (All)    | -          | -               | f r"^abc$"
+   Exact (File)   | -          | -               | f r"^abc$" -f
+   Exact (Dir)    | f /abc/    | -               | f r"^abc$" -d
    Starts (All)   | f /abc    | f "abc*"        | f r"^abc"
    Starts (File)  | f /abc -f | f "abc*" -f     | f r"^abc" -f
    Starts (Dir)   | f /abc -d | f "abc*" -d     | f r"^abc" -d
@@ -67,7 +67,8 @@ Arguments:
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
   - Prefix a pattern with r and wrap in quotes to treat it as a regex (e.g., f r"^test").
-  - Plain patterns are contains. Use "word" or regex anchors for exact matching.
+  - Plain patterns are contains. For exact matches use regex anchors
+    (e.g., r"^word$"), or /word/ for exact-directory shorthand.
 
 Options:
   --dir, -d
