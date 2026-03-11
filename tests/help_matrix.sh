@@ -121,7 +121,6 @@ assert_eq "search_dir contains (regex)" "$(list_parent_dirs "\"${NEEDLE}\"" "r\"
 
 # SEARCH DIR MATRIX: exact
 assert_eq "search_dir exact (shorthand)" "$(list_parent_dirs "\"${NEEDLE}\"" "/${TOKEN}/")" "$want_sd_exact"
-assert_eq "search_dir exact (wildcard)" "$(list_parent_dirs "\"${NEEDLE}\"" "\"${TOKEN}\"")" "$want_sd_exact"
 assert_eq "search_dir exact (regex)" "$(list_parent_dirs "\"${NEEDLE}\"" "r\"^${TOKEN}\$\"")" "$want_sd_exact"
 
 # SEARCH DIR MATRIX: starts

@@ -51,7 +51,7 @@ Arguments:
    Goal           | Shorthand | Wildcard Format | Regex Format (r"")
    ---------------|-----------|-----------------|------------------
    Contains       | abc       | "*abc*"         | r"abc"
-   Exact          | /abc/     | "abc"           | r"^abc$"
+   Exact          | /abc/     | -               | r"^abc$"
    Starts         | /abc      | "abc*"          | r"^abc"
    Ends           | abc/      | "*abc"          | r"abc$"
 
