@@ -364,27 +364,46 @@ parse_search_dir() {
 }
 
 run_fd() {
-  # run_fd <root> <typeflag-or-empty> <regex> <pathflag-or-empty>
+  # run_fd <root> <typeflag-or-empty> <regex> <pathflag-or-empty> [extra-fd-opts...]
   local root="$1"
   local typeflag="${2:-}"
   local rx="$3"
   local pathflag="${4:-}"
+  shift 4
+  local extra_opts=("$@")
 
   local color_opt=""
   # Force color if output is a TTY.
-  # If showing info, we handle color stripping in the transform.
+  # Hyperlinks are handled in our final output transform.
   if [[ "$IS_TTY" == "true" ]]; then
     color_opt="--color=always"
   fi
 
+  local fd_args=(fd --hidden -i "${FD_EXCLUDES[@]}")
+  [[ -n "$NO_IGNORE" ]] && fd_args+=("$NO_IGNORE")
+  [[ -n "$color_opt" ]] && fd_args+=("$color_opt")
+  if [[ -n "$typeflag" ]]; then
+    # typeflag can be two words (e.g., "--type f")
+    # shellcheck disable=SC2206
+    local tf_parts=($typeflag)
+    fd_args+=("${tf_parts[@]}")
+  fi
+  [[ -n "$pathflag" ]] && fd_args+=("$pathflag")
+  (( ${#extra_opts[@]} )) && fd_args+=("${extra_opts[@]}")
+  fd_args+=(--regex "$rx" "$root")
+
   timeout --preserve-status --kill-after="$kill_after" "$timeout_dur" \
-    fd $color_opt --hidden $NO_IGNORE -i "${FD_EXCLUDES[@]}" $typeflag $pathflag --regex "$rx" "$root"
+    "${fd_args[@]}"
 }
 
 find_dirs_anywhere_nul() {
   # Emits NUL-delimited directories anywhere under / whose basename matches SD_dir_regex
+  local fd_args=(fd --hidden -i "${FD_EXCLUDES[@]}")
+  [[ -n "$NO_IGNORE" ]] && fd_args+=("$NO_IGNORE")
+  fd_args+=(--type d --regex "$SD_dir_regex" "/" -0)
+
   timeout --preserve-status --kill-after="$kill_after" "$timeout_dur" \
-    fd --hidden $NO_IGNORE -i "${FD_EXCLUDES[@]}" --type d --regex "$SD_dir_regex" "/" -0
+    "${fd_args[@]}"
 }
 
 prune_children() {
@@ -404,6 +423,15 @@ prune_children() {
   }'
 }
 
+strip_terminal_sequences() {
+  # Strip ANSI colors and OSC-8 hyperlinks (both ST and BEL terminated forms).
+  sed \
+    -e 's/\x1b\[[0-9;]*m//g' \
+    -e 's/\x1b]8;;[^\x1b]*\x1b\\//g' \
+    -e 's/\x1b]8;;\x1b\\//g' \
+    -e 's/\x1b]8;;[^\a]*\a//g'
+}
+
 add_info_transform() {
   if [[ "$SHOW_INFO" != "true" ]]; then
     cat
@@ -411,10 +439,9 @@ add_info_transform() {
   fi
 
   while IFS= read -r line; do
-    # Strip ANSI escape codes to get the clean file path for stat
-    # (Matches \e[...m)
+    # Strip terminal escape codes to get the clean file path for stat.
     local clean_path
-    clean_path=$(printf '%s' "$line" | sed 's/\x1b\[[0-9;]*m//g')
+    clean_path=$(printf '%s' "$line" | strip_terminal_sequences)
 
     # Get date and size
     # stat -c "%y %s" -> YYYY-MM-DD HH:MM:SS.NNN TZ SIZE
@@ -435,17 +462,16 @@ add_info_transform() {
 
 counts_summary_transform() {
   # Summarize matches as: <count> <folder>
-  # - strips ANSI colors
+  # - strips ANSI colors and OSC-8 hyperlinks
   # - strips optional "YYYY-MM-DD SIZE " info prefix (from --info)
   # - normalizes directory matches by removing trailing "/"
   if [[ "$IS_TTY" == "true" ]]; then
     printf '%7s  %s\n' "COUNT" "FOLDER"
   fi
 
-  awk '
+  strip_terminal_sequences | awk '
     {
       line=$0
-      gsub(/\x1b\[[0-9;]*m/, "", line)
       sub(/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]+ /, "", line)
 
       p=line
@@ -470,11 +496,54 @@ counts_summary_transform() {
   | awk -F"\t" '{ printf "%7d  %s\n", $1, $2 }'
 }
 
+add_hyperlink_transform() {
+  # Render final output lines as clickable file:// links in TTYs.
+  if [[ "$IS_TTY" != "true" ]]; then
+    cat
+    return
+  fi
+
+  local cwd_abs
+  cwd_abs="$(pwd -P)"
+
+  while IFS= read -r line; do
+    local clean_line
+    local path_part
+    local abs_path
+    local url_path
+
+    clean_line=$(printf '%s' "$line" | strip_terminal_sequences)
+    path_part="$clean_line"
+    if [[ "$SHOW_INFO" == "true" ]]; then
+      path_part=$(printf '%s' "$path_part" | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]+ //')
+    fi
+
+    if [[ -z "$path_part" ]]; then
+      printf '%s\n' "$line"
+      continue
+    fi
+
+    if [[ "$path_part" == /* ]]; then
+      abs_path="$path_part"
+    else
+      abs_path="${cwd_abs}/${path_part#./}"
+    fi
+
+    url_path=$(printf '%s' "$abs_path" | sed \
+      -e 's/%/%25/g' \
+      -e 's/ /%20/g' \
+      -e 's/#/%23/g' \
+      -e 's/?/%3F/g')
+
+    printf '\033]8;;file://%s\033\\%s\033]8;;\033\\\n' "$url_path" "$line"
+  done
+}
+
 final_transform() {
   if [[ "$COUNTS" == "true" ]]; then
     counts_summary_transform
   else
-    add_info_transform
+    add_info_transform | add_hyperlink_transform
   fi
 }
 
