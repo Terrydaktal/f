@@ -17,20 +17,20 @@ Arguments:
 
    SEARCH MATRIX:
 
-   Goal           | Shorthand | Wildcard Format | Regex Format (r"")
-   ---------------|-----------|-----------------|------------------
+   Goal           | Shorthand  | Wildcard Format | Regex Format (r"")
+   ---------------|------------|-----------------|------------------
    Contains (All) | f abc      | f "*abc*"       | f r"abc"
    Contains (File)| f abc -f   | f "*abc*" -f    | f r"abc" -f
    Contains (Dir) | f abc -d   | f "*abc*" -d    | f r"abc" -d
    Exact (All)    | -          | -               | f r"^abc$"
    Exact (File)   | -          | -               | f r"^abc$" -f
    Exact (Dir)    | f /abc/    | -               | f r"^abc$" -d
-   Starts (All)   | f /abc    | f "abc*"        | f r"^abc"
-   Starts (File)  | f /abc -f | f "abc*" -f     | f r"^abc" -f
-   Starts (Dir)   | f /abc -d | f "abc*" -d     | f r"^abc" -d
-   Ends (All)     | -         | f "*abc"        | f r"abc$"
-   Ends (File)    | -         | f "*abc" -f     | f r"abc$" -f
-   Ends (Dir)     | f abc/    | f "*abc" -d     | f r"abc$" -d
+   Starts (All)   | f /abc     | f "abc*"        | f r"^abc"
+   Starts (File)  | f /abc -f  | f "abc*" -f     | f r"^abc" -f
+   Starts (Dir)   | f /abc -d  | f "abc*" -d     | f r"^abc" -d
+   Ends (All)     | -          | f "*abc"        | f r"abc$"
+   Ends (File)    | -          | f "*abc" -f     | f r"abc$" -f
+   Ends (Dir)     | f abc/     | f "*abc" -d     | f r"abc$" -d
 
    <search_dir>:
       Location to search. Defaults to '.' (the current directory).
