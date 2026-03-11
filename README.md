@@ -8,6 +8,7 @@ Usage:
   f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
                        [--dir|-d] [--file|-f] [--bypass|-b]
                        [--timeout N]
+  f (--version|-V)
 
 Arguments:
    <filename/dirname>:
@@ -90,4 +91,6 @@ Options:
   --bypass, -b
       Force treating the search_dir as a pattern, even if it exists as
       a directory.
+  --version, -V
+      Show version and exit.
 ```

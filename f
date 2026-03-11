@@ -13,6 +13,7 @@ Usage:
   f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
                        [--dir|-d] [--file|-f] [--bypass|-b]
                        [--timeout N]
+  f (--version|-V)
 
 Arguments:
    <filename/dirname>:
@@ -92,12 +93,15 @@ Options:
       Examples: --timeout 10, --timeout 10s, --timeout 2m
   --bypass, -b
       Force treating the search_dir as a pattern, even if it exists as a directory.
+  --version, -V
+      Show version and exit.
 EOF
 }
 
 # ----------------------------
 # Config
 # ----------------------------
+VERSION="0.7.2"
 timeout_dur="6s"
 kill_after="2s"
 FORCE_PATTERN_MODE=false
@@ -364,6 +368,10 @@ parse_search_dir() {
   SD_dir_regex="$(to_regex_fragment "$normalized")"
 }
 
+print_version() {
+  printf 'f %s\n' "$VERSION"
+}
+
 run_fd() {
   # run_fd <root> <typeflag-or-empty> <regex> <pathflag-or-empty> [extra-fd-opts...]
   local root="$1"
@@ -601,6 +609,10 @@ main() {
       --audit)
         echo "f: --audit was renamed to --counts" >&2
         exit 2
+        ;;
+      --version|-V)
+        print_version
+        exit 0
         ;;
       -h|--help)
         usage
