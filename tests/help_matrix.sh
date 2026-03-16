@@ -222,6 +222,25 @@ assert_eq "recursive default" "$(list_rel "$NONREC_ROOT" abc -f)" "$want_recursi
 assert_eq "no recurse" "$(list_rel "$NONREC_ROOT" abc -f --no-recurse)" "$want_non_recursive"
 assert_eq "no recurse alias -R" "$(list_rel "$NONREC_ROOT" abc -f -R)" "$want_non_recursive"
 
+# VISIBILITY MATRIX
+VISIBLE_ROOT="${TMP_BASE}/visible_root"
+mkdir -p "$VISIBLE_ROOT"
+touch "${VISIBLE_ROOT}/.hidden_hit" "${VISIBLE_ROOT}/visible_hit"
+want_visible_default=$'.hidden_hit\nvisible_hit'
+want_visible_only='visible_hit'
+assert_eq "default includes hidden entries" "$(list_rel "$VISIBLE_ROOT" '*hit' -f)" "$want_visible_default"
+assert_eq "visible-only excludes hidden entries" "$(list_rel "$VISIBLE_ROOT" '*hit' -f --visible-only)" "$want_visible_only"
+
+# IGNORE MATRIX
+IGNORE_ROOT="${TMP_BASE}/ignore_root"
+mkdir -p "$IGNORE_ROOT"
+touch "${IGNORE_ROOT}/ignore_me" "${IGNORE_ROOT}/keep_me"
+printf 'ignore_me\n' > "${IGNORE_ROOT}/.gitignore"
+git -C "$IGNORE_ROOT" init -q
+want_ignore_default='ignore_me'
+assert_eq "default bypasses gitignore" "$(list_rel "$IGNORE_ROOT" ignore_me -f)" "$want_ignore_default"
+assert_eq "ignore respects gitignore" "$(list_rel "$IGNORE_ROOT" ignore_me -f --ignore)" ""
+
 # FOLLOW-LINKS MATRIX
 FOLLOW_ROOT="${TMP_BASE}/follow_root"
 FOLLOW_EXTERNAL="${TMP_BASE}/follow_external"

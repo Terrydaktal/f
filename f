@@ -14,6 +14,7 @@ Usage:
                        [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
                        [--timeout N] [--sort date|size|name asc|desc]
                        [--no-recurse|-R] [--follow-links]
+                       [--ignore] [--visible-only]
   f (--version|-V)
 
 Arguments:
@@ -104,8 +105,12 @@ Options:
       Search only the immediate entries in each search root (no recursion).
   --follow-links
       Follow symlinked directories while searching.
-  --no-ignore, -I
-      Show files and directories that are ignored by .gitignore, etc.
+  --ignore
+      Respect ignore rules (.gitignore/.ignore/.fdignore). By default, f
+      bypasses ignore rules.
+  --visible-only
+      Exclude hidden files/directories (dotfiles). By default, f includes
+      hidden entries.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
@@ -119,7 +124,7 @@ EOF
 # ----------------------------
 # Config
 # ----------------------------
-VERSION="0.7.4"
+VERSION="0.7.7"
 timeout_dur="6s"
 kill_after="2s"
 FORCE_PATTERN_MODE=false
@@ -131,7 +136,8 @@ SORT_FIELD=""
 SORT_ORDER=""
 NO_RECURSE=false
 FOLLOW_LINKS=false
-NO_IGNORE="--no-ignore"
+RESPECT_IGNORE=false
+VISIBLE_ONLY=false
 DIRSIZE_THREADS=8
 HAVE_DIRSIZE=false
 if command -v dirsize >/dev/null 2>&1; then
@@ -599,8 +605,13 @@ run_fd() {
   shift 4
   local extra_opts=("$@")
 
-  local fd_args=(fd --color=never --hidden -i "${FD_EXCLUDES[@]}")
-  [[ -n "$NO_IGNORE" ]] && fd_args+=("$NO_IGNORE")
+  local fd_args=(fd --color=never -i "${FD_EXCLUDES[@]}")
+  if [[ "$RESPECT_IGNORE" != "true" ]]; then
+    fd_args+=(--no-ignore)
+  fi
+  if [[ "$VISIBLE_ONLY" != "true" ]]; then
+    fd_args+=(--hidden)
+  fi
   if [[ "$FOLLOW_LINKS" == "true" ]]; then
     fd_args+=(--follow)
   fi
@@ -623,8 +634,13 @@ run_fd() {
 
 find_dirs_anywhere_nul() {
   # Emits NUL-delimited directories anywhere under / whose basename matches SD_dir_regex
-  local fd_args=(fd --hidden -i "${FD_EXCLUDES[@]}")
-  [[ -n "$NO_IGNORE" ]] && fd_args+=("$NO_IGNORE")
+  local fd_args=(fd -i "${FD_EXCLUDES[@]}")
+  if [[ "$RESPECT_IGNORE" != "true" ]]; then
+    fd_args+=(--no-ignore)
+  fi
+  if [[ "$VISIBLE_ONLY" != "true" ]]; then
+    fd_args+=(--hidden)
+  fi
   if [[ "$FOLLOW_LINKS" == "true" ]]; then
     fd_args+=(--follow)
   fi
@@ -985,8 +1001,12 @@ main() {
         FOLLOW_LINKS=true
         shift
         ;;
-      --no-ignore|-I)
-        NO_IGNORE="--no-ignore"
+      --ignore)
+        RESPECT_IGNORE=true
+        shift
+        ;;
+      --visible-only)
+        VISIBLE_ONLY=true
         shift
         ;;
       --bypass|-b)

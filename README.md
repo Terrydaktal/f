@@ -9,6 +9,7 @@ Usage:
                        [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
                        [--timeout N] [--sort date|size|name asc|desc]
                        [--no-recurse|-R] [--follow-links]
+                       [--ignore] [--visible-only]
   f (--version|-V)
 
 Arguments:
@@ -102,6 +103,12 @@ Options:
       Search only the immediate entries in each search root (no recursion).
   --follow-links
       Follow symlinked directories while searching.
+  --ignore
+      Respect ignore rules (.gitignore/.ignore/.fdignore). By default, f
+      bypasses ignore rules.
+  --visible-only
+      Exclude hidden files/directories (dotfiles). By default, f includes
+      hidden entries.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
