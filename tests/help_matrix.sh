@@ -222,6 +222,15 @@ assert_eq "recursive default" "$(list_rel "$NONREC_ROOT" abc -f)" "$want_recursi
 assert_eq "no recurse" "$(list_rel "$NONREC_ROOT" abc -f --no-recurse)" "$want_non_recursive"
 assert_eq "no recurse alias -R" "$(list_rel "$NONREC_ROOT" abc -f -R)" "$want_non_recursive"
 
+# FOLLOW-LINKS MATRIX
+FOLLOW_ROOT="${TMP_BASE}/follow_root"
+FOLLOW_EXTERNAL="${TMP_BASE}/follow_external"
+mkdir -p "$FOLLOW_ROOT" "$FOLLOW_EXTERNAL"
+touch "${FOLLOW_EXTERNAL}/follow_only"
+ln -s "$FOLLOW_EXTERNAL" "${FOLLOW_ROOT}/linked_dir"
+assert_eq "no follow-links does not traverse symlinked dirs" "$(list_rel "$FOLLOW_ROOT" follow_only -f)" ""
+assert_eq "follow-links traverses symlinked dirs" "$(list_rel "$FOLLOW_ROOT" follow_only -f --follow-links)" "linked_dir/follow_only"
+
 # RECURSION + SIZE SORT MATRIX (fast non-recursive size key for dirs)
 NONREC_SIZE_ROOT="${TMP_BASE}/nonrec_size_root"
 mkdir -p "${NONREC_SIZE_ROOT}/huge_dir"

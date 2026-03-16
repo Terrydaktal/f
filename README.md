@@ -8,7 +8,7 @@ Usage:
   f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
                        [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
                        [--timeout N] [--sort date|size|name asc|desc]
-                       [--no-recurse|-R]
+                       [--no-recurse|-R] [--follow-links]
   f (--version|-V)
 
 Arguments:
@@ -100,6 +100,8 @@ Options:
       Note: --counts output is always sorted by count/folder and ignores --sort.
   --no-recurse, -R
       Search only the immediate entries in each search root (no recursion).
+  --follow-links
+      Follow symlinked directories while searching.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m

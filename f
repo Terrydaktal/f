@@ -13,7 +13,7 @@ Usage:
   f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
                        [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
                        [--timeout N] [--sort date|size|name asc|desc]
-                       [--no-recurse|-R]
+                       [--no-recurse|-R] [--follow-links]
   f (--version|-V)
 
 Arguments:
@@ -102,6 +102,8 @@ Options:
       Note: --counts output is always sorted by count/folder and ignores --sort.
   --no-recurse, -R
       Search only the immediate entries in each search root (no recursion).
+  --follow-links
+      Follow symlinked directories while searching.
   --no-ignore, -I
       Show files and directories that are ignored by .gitignore, etc.
   --timeout N
@@ -128,6 +130,7 @@ REGEX_MODE=false
 SORT_FIELD=""
 SORT_ORDER=""
 NO_RECURSE=false
+FOLLOW_LINKS=false
 NO_IGNORE="--no-ignore"
 DIRSIZE_THREADS=8
 HAVE_DIRSIZE=false
@@ -140,6 +143,7 @@ declare -A DIR_STATS_HUMAN
 
 # Read colors from LS_COLORS when available; otherwise use built-in defaults.
 COLOR_RESET=$'\033[0m'
+COLOR_PREFIX_DIR="38;2;255;255;255"
 COLOR_DIR="01;34"
 COLOR_LINK="01;36"
 COLOR_EXEC="01;32"
@@ -280,8 +284,9 @@ colorize_path_display() {
   # colorize_path_display <display_path> <abs_path>
   local display_path="$1"
   local abs_path="$2"
-  local code prefix leaf path_core
+  local code leaf_code prefix leaf path_core
   code="$(color_code_for_path "$abs_path" "$display_path")"
+  leaf_code="$code"
 
   # Mimic fd-like rendering: prefix path in directory color, leaf in its own class color.
   if [[ "$display_path" == */* ]]; then
@@ -295,11 +300,11 @@ colorize_path_display() {
     fi
 
     if [[ -n "$prefix" ]]; then
-      color_wrap "${COLOR_CODE_BY_KEY[di]:-$COLOR_DIR}" "$prefix"
+      color_wrap "$COLOR_PREFIX_DIR" "$prefix"
     fi
-    color_wrap "$code" "$leaf"
+    color_wrap "$leaf_code" "$leaf"
   else
-    color_wrap "$code" "$display_path"
+    color_wrap "$leaf_code" "$display_path"
   fi
 }
 
@@ -596,6 +601,9 @@ run_fd() {
 
   local fd_args=(fd --color=never --hidden -i "${FD_EXCLUDES[@]}")
   [[ -n "$NO_IGNORE" ]] && fd_args+=("$NO_IGNORE")
+  if [[ "$FOLLOW_LINKS" == "true" ]]; then
+    fd_args+=(--follow)
+  fi
   if [[ "$NO_RECURSE" == "true" ]]; then
     fd_args+=(--max-depth 1)
   fi
@@ -617,6 +625,9 @@ find_dirs_anywhere_nul() {
   # Emits NUL-delimited directories anywhere under / whose basename matches SD_dir_regex
   local fd_args=(fd --hidden -i "${FD_EXCLUDES[@]}")
   [[ -n "$NO_IGNORE" ]] && fd_args+=("$NO_IGNORE")
+  if [[ "$FOLLOW_LINKS" == "true" ]]; then
+    fd_args+=(--follow)
+  fi
   fd_args+=(--type d --regex "$SD_dir_regex" "/" -0)
 
   timeout --preserve-status --kill-after="$kill_after" "$timeout_dur" \
@@ -968,6 +979,10 @@ main() {
         ;;
       --no-recurse|-R)
         NO_RECURSE=true
+        shift
+        ;;
+      --follow-links)
+        FOLLOW_LINKS=true
         shift
         ;;
       --no-ignore|-I)
