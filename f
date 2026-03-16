@@ -11,31 +11,32 @@ A parallel recursive file searcher
 Usage:
   f <filename/dirname> [<search_dir>]
   f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
-                       [--dir|-d] [--file|-f] [--bypass|-b]
-                       [--timeout N]
+                       [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
+                       [--timeout N] [--sort date|size|name asc|desc]
+                       [--no-recurse|-R]
   f (--version|-V)
 
 Arguments:
    <filename/dirname>:
-      The file or directory name to search for. Supports exact, partial,
-      and regex matching based on the pattern format (see matrix below).
+      The file or directory name to search for. Supports exact and partial
+      matching by default; use --regex/-r for regex matching.
 
    SEARCH MATRIX:
 
-   Goal           | Shorthand  | Wildcard Format | Regex Format (r"")
+   Goal           | Shorthand  | Wildcard Format | Regex Format
    ---------------|------------|-----------------|------------------
-   Contains (All) | f abc      | f "*abc*"       | f r"abc"
-   Contains (File)| f abc -f   | f "*abc*" -f    | f r"abc" -f
-   Contains (Dir) | f abc -d   | f "*abc*" -d    | f r"abc" -d
-   Exact (All)    | -          | -               | f r"^abc$"
-   Exact (File)   | -          | -               | f r"^abc$" -f
-   Exact (Dir)    | f /abc/    | -               | f r"^abc$" -d
-   Starts (All)   | f /abc     | f "abc*"        | f r"^abc"
-   Starts (File)  | f /abc -f  | f "abc*" -f     | f r"^abc" -f
-   Starts (Dir)   | f /abc -d  | f "abc*" -d     | f r"^abc" -d
-   Ends (All)     | -          | f "*abc"        | f r"abc$"
-   Ends (File)    | -          | f "*abc" -f     | f r"abc$" -f
-   Ends (Dir)     | f abc/     | f "*abc" -d     | f r"abc$" -d
+   Contains (All) | f abc      | f "*abc*"       | f -r "abc"
+   Contains (File)| f abc -f   | f "*abc*" -f    | f -r "abc" -f
+   Contains (Dir) | f abc -d   | f "*abc*" -d    | f -r "abc" -d
+   Exact (All)    | -          | -               | f -r "^abc$"
+   Exact (File)   | -          | -               | f -r "^abc$" -f
+   Exact (Dir)    | f /abc/    | -               | f -r "^abc$" -d
+   Starts (All)   | f /abc     | f "abc*"        | f -r "^abc"
+   Starts (File)  | f /abc -f  | f "abc*" -f     | f -r "^abc" -f
+   Starts (Dir)   | f /abc -d  | f "abc*" -d     | f -r "^abc" -d
+   Ends (All)     | -          | f "*abc"        | f -r "abc$"
+   Ends (File)    | -          | f "*abc" -f     | f -r "abc$" -f
+   Ends (Dir)     | f abc/     | f "*abc" -d     | f -r "abc$" -d
 
    <search_dir>:
       Location to search. Defaults to '.' (the current directory).
@@ -49,12 +50,12 @@ Arguments:
 
    SEARCH DIR MATRIX:
 
-   Goal           | Shorthand | Wildcard Format | Regex Format (r"")
+   Goal           | Shorthand | Wildcard Format | Regex Format
    ---------------|-----------|-----------------|------------------
-   Contains       | abc       | "*abc*"         | r"abc"
-   Exact          | /abc/     | -               | r"^abc$"
-   Starts         | /abc      | "abc*"          | r"^abc"
-   Ends           | abc/      | "*abc"          | r"abc$"
+   Contains       | abc       | "*abc*"         | -r "abc"
+   Exact          | /abc/     | -               | -r "^abc$"
+   Starts         | /abc      | "abc*"          | -r "^abc"
+   Ends           | abc/      | "*abc"          | -r "abc$"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
 
@@ -67,9 +68,9 @@ Arguments:
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
-  - Prefix a pattern with r and wrap in quotes to treat it as a regex (e.g., f r"^test").
+  - Regex mode is only enabled with --regex/-r.
   - Plain patterns are contains. For exact matches use regex anchors
-    (e.g., r"^word$"), or /word/ for exact-directory shorthand.
+    (e.g., --regex "^word$"), or /word/ for exact-directory shorthand.
 
 Options:
   --dir, -d
@@ -79,13 +80,28 @@ Options:
   --counts
       Show a summary of matches by parent folder (folder path + count), instead
       of listing every matching file. If a directory itself matches, it counts
-      as 1 match for its parent folder. Note: --info does not change --counts
+      as 1 match for its parent folder. Note: --long does not change --counts
       output.
       Renamed from --audit (which is no longer accepted).
   --full, -F
       Match against the full absolute path instead of just the basename.
-  --info, -i
-      Show the date of last modification and size at the start of each line.
+  --regex, -r
+      Treat filename/dirname and search_dir patterns as regular expressions.
+  --long, -l
+      Show the date and time of last modification and size
+      (B, KiB, MiB, GiB, TiB) at the start of each line.
+  -L
+      Extended long output for directories:
+      YYYY-MM-DD HH:MM:SS REALDIRSIZE FILECOUNT PATH
+      Symlinked directories are not traversed (shown as link size, count 0).
+  --sort FIELD ORDER
+      Sort listed results by metadata. Supported:
+      --sort date asc|desc, --sort size asc|desc, --sort name asc|desc
+      For directories, size sort uses real allocated directory size.
+      With --no-recurse/-R, size sort uses direct entry size for speed.
+      Note: --counts output is always sorted by count/folder and ignores --sort.
+  --no-recurse, -R
+      Search only the immediate entries in each search root (no recursion).
   --no-ignore, -I
       Show files and directories that are ignored by .gitignore, etc.
   --timeout N
@@ -101,13 +117,55 @@ EOF
 # ----------------------------
 # Config
 # ----------------------------
-VERSION="0.7.2"
+VERSION="0.7.4"
 timeout_dur="6s"
 kill_after="2s"
 FORCE_PATTERN_MODE=false
-SHOW_INFO=false
+LONG_FORMAT=false
+LONG_EXTENDED=false
 COUNTS=false
+REGEX_MODE=false
+SORT_FIELD=""
+SORT_ORDER=""
+NO_RECURSE=false
 NO_IGNORE="--no-ignore"
+DIRSIZE_THREADS=8
+HAVE_DIRSIZE=false
+if command -v dirsize >/dev/null 2>&1; then
+  HAVE_DIRSIZE=true
+fi
+declare -A DIR_STATS_FILES
+declare -A DIR_STATS_BYTES
+declare -A DIR_STATS_HUMAN
+
+# Read colors from LS_COLORS when available; otherwise use built-in defaults.
+COLOR_RESET=$'\033[0m'
+COLOR_DIR="01;34"
+COLOR_LINK="01;36"
+COLOR_EXEC="01;32"
+COLOR_SPEC="${LS_COLORS:-}"
+declare -A COLOR_CODE_BY_KEY
+declare -a COLOR_GLOB_PATTERNS
+declare -a COLOR_GLOB_CODES
+if [[ -n "$COLOR_SPEC" ]]; then
+  IFS=':' read -r -a _ls_colors_entries <<< "$COLOR_SPEC"
+  for _entry in "${_ls_colors_entries[@]}"; do
+    [[ "$_entry" == *=* ]] || continue
+    _key="${_entry%%=*}"
+    _val="${_entry#*=}"
+    if [[ "$_key" == \** ]]; then
+      COLOR_GLOB_PATTERNS+=("$_key")
+      COLOR_GLOB_CODES+=("$_val")
+      continue
+    fi
+    COLOR_CODE_BY_KEY["$_key"]="$_val"
+    case "$_key" in
+      di) COLOR_DIR="$_val" ;;
+      ln) COLOR_LINK="$_val" ;;
+      ex) COLOR_EXEC="$_val" ;;
+    esac
+  done
+fi
 
 # Detect if stdout is a TTY
 if [ -t 1 ]; then
@@ -130,6 +188,169 @@ normalize_timeout() {
   else
     printf '%s' "$t"
   fi
+}
+
+color_wrap() {
+  local code="$1"
+  local text="$2"
+  if [[ -z "$code" ]]; then
+    printf '%s' "$text"
+  else
+    printf '\033[%sm%s%s' "$code" "$text" "$COLOR_RESET"
+  fi
+}
+
+color_code_for_path() {
+  # color_code_for_path <abs_path> <display_path>
+  local abs_path="$1"
+  local display_path="$2"
+  local base="${display_path%/}"
+  base="${base##*/}"
+  local code=""
+  local allow_glob_overrides=false
+
+  # Base class color by filesystem type.
+  if [[ -L "$abs_path" ]]; then
+    if [[ ! -e "$abs_path" && -n "${COLOR_CODE_BY_KEY[or]:-}" ]]; then
+      code="${COLOR_CODE_BY_KEY[or]}"
+    else
+      code="${COLOR_CODE_BY_KEY[ln]:-$COLOR_LINK}"
+    fi
+  elif [[ -d "$abs_path" ]]; then
+    local dir_mode other_writable
+    dir_mode="$(stat -c '%A' "$abs_path" 2>/dev/null || true)"
+    other_writable=false
+    if [[ ${#dir_mode} -ge 9 && "${dir_mode:8:1}" == "w" ]]; then
+      other_writable=true
+    fi
+
+    if [[ -k "$abs_path" && "$other_writable" == "true" && -n "${COLOR_CODE_BY_KEY[tw]:-}" ]]; then
+      code="${COLOR_CODE_BY_KEY[tw]}"
+    elif [[ -k "$abs_path" && -n "${COLOR_CODE_BY_KEY[st]:-}" ]]; then
+      code="${COLOR_CODE_BY_KEY[st]}"
+    elif [[ "$other_writable" == "true" && -n "${COLOR_CODE_BY_KEY[ow]:-}" ]]; then
+      code="${COLOR_CODE_BY_KEY[ow]}"
+    else
+      code="${COLOR_CODE_BY_KEY[di]:-$COLOR_DIR}"
+    fi
+  elif [[ -p "$abs_path" ]]; then
+    code="${COLOR_CODE_BY_KEY[pi]:-}"
+  elif [[ -S "$abs_path" ]]; then
+    code="${COLOR_CODE_BY_KEY[so]:-}"
+  elif [[ -b "$abs_path" ]]; then
+    code="${COLOR_CODE_BY_KEY[bd]:-}"
+  elif [[ -c "$abs_path" ]]; then
+    code="${COLOR_CODE_BY_KEY[cd]:-}"
+  elif [[ -f "$abs_path" && -u "$abs_path" && -n "${COLOR_CODE_BY_KEY[su]:-}" ]]; then
+    code="${COLOR_CODE_BY_KEY[su]}"
+    allow_glob_overrides=true
+  elif [[ -f "$abs_path" && -g "$abs_path" && -n "${COLOR_CODE_BY_KEY[sg]:-}" ]]; then
+    code="${COLOR_CODE_BY_KEY[sg]}"
+    allow_glob_overrides=true
+  elif [[ -f "$abs_path" && -x "$abs_path" ]]; then
+    code="${COLOR_CODE_BY_KEY[ex]:-$COLOR_EXEC}"
+    allow_glob_overrides=true
+  elif [[ -f "$abs_path" ]]; then
+    code="${COLOR_CODE_BY_KEY[fi]:-}"
+    allow_glob_overrides=true
+  else
+    code="${COLOR_CODE_BY_KEY[no]:-}"
+  fi
+
+  # Apply glob/pattern overrides (e.g., *.md, *README) to regular files only.
+  if [[ "$allow_glob_overrides" == "true" ]]; then
+    local -a glob_patterns glob_codes
+    glob_patterns=("${COLOR_GLOB_PATTERNS[@]-}")
+    glob_codes=("${COLOR_GLOB_CODES[@]-}")
+    local i pattern
+    for ((i=0; i<${#glob_patterns[@]}; i++)); do
+      pattern="${glob_patterns[$i]}"
+      # shellcheck disable=SC2053 # intentional glob-style match against color pattern keys
+      if [[ "$base" == $pattern ]]; then
+        code="${glob_codes[$i]}"
+        break
+      fi
+    done
+  fi
+
+  printf '%s' "$code"
+}
+
+colorize_path_display() {
+  # colorize_path_display <display_path> <abs_path>
+  local display_path="$1"
+  local abs_path="$2"
+  local code prefix leaf path_core
+  code="$(color_code_for_path "$abs_path" "$display_path")"
+
+  # Mimic fd-like rendering: prefix path in directory color, leaf in its own class color.
+  if [[ "$display_path" == */* ]]; then
+    if [[ "$display_path" == */ ]]; then
+      path_core="${display_path%/}"
+      prefix="${path_core%/*}/"
+      leaf="${path_core##*/}/"
+    else
+      prefix="${display_path%/*}/"
+      leaf="${display_path##*/}"
+    fi
+
+    if [[ -n "$prefix" ]]; then
+      color_wrap "${COLOR_CODE_BY_KEY[di]:-$COLOR_DIR}" "$prefix"
+    fi
+    color_wrap "$code" "$leaf"
+  else
+    color_wrap "$code" "$display_path"
+  fi
+}
+
+DIRSIZE_FILES=""
+DIRSIZE_BYTES=""
+DIRSIZE_HUMAN=""
+get_dirsize_stats() {
+  local path="$1"
+  DIRSIZE_FILES=""
+  DIRSIZE_BYTES=""
+  DIRSIZE_HUMAN=""
+
+  # Never resolve symlinked directories here.
+  if [[ -L "$path" ]]; then
+    return 1
+  fi
+
+  if [[ -n "${DIR_STATS_BYTES[$path]+x}" ]]; then
+    DIRSIZE_FILES="${DIR_STATS_FILES[$path]}"
+    DIRSIZE_BYTES="${DIR_STATS_BYTES[$path]}"
+    DIRSIZE_HUMAN="${DIR_STATS_HUMAN[$path]}"
+    return 0
+  fi
+
+  if [[ "$HAVE_DIRSIZE" != "true" ]]; then
+    return 1
+  fi
+
+  local out files bytes human
+  out=$(dirsize "$path" --threads "$DIRSIZE_THREADS" 2>/dev/null || true)
+  [[ -n "$out" ]] || return 1
+
+  files=$(printf '%s\n' "$out" | awk -F': *' '/^files:/ {print $2; exit}')
+  bytes=$(printf '%s\n' "$out" | awk -F': *' '/^bytes:/ {print $2; exit}')
+  human=$(printf '%s\n' "$out" | awk -F': *' '/^human:/ {print $2; exit}')
+
+  files=$(printf '%s' "$files" | tr -d '[:space:]')
+  bytes=$(printf '%s' "$bytes" | tr -d '[:space:]')
+  human=$(printf '%s' "$human" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+
+  if [[ "$files" =~ ^[0-9]+$ && "$bytes" =~ ^[0-9]+$ && -n "$human" ]]; then
+    DIR_STATS_FILES["$path"]="$files"
+    DIR_STATS_BYTES["$path"]="$bytes"
+    DIR_STATS_HUMAN["$path"]="$human"
+    DIRSIZE_FILES="$files"
+    DIRSIZE_BYTES="$bytes"
+    DIRSIZE_HUMAN="$human"
+    return 0
+  fi
+
+  return 1
 }
 
 # Escape regex metacharacters, but keep '*' as a wildcard token (converted later)
@@ -197,11 +418,7 @@ OUT_regex=""
 OUT_pathflag=""
 parse_name_pattern() {
   local raw="$1"
-  local use_regex=false
-  if [[ "$raw" == r'"'*'"' || "$raw" == r"'"*"'" ]]; then
-    use_regex=true
-    raw="${raw:1}"
-  fi
+  local use_regex="$REGEX_MODE"
   OUT_typeflag=""
   OUT_regex=""
   OUT_pathflag=""
@@ -272,17 +489,13 @@ SD_path=""
 SD_dir_regex=""
 parse_search_dir() {
   local raw="$1"
-  local use_regex=false
-  if [[ "$raw" == r'"'*'"' || "$raw" == r"'"*"'" ]]; then
-    use_regex=true
-    raw="${raw:1}"
-  fi
+  local use_regex="$REGEX_MODE"
   SD_mode=""
   SD_path=""
   SD_dir_regex=""
 
   # If it exists as a directory (relative or absolute), use it as a PATH.
-  if [[ "$FORCE_PATTERN_MODE" == "false" && "$use_regex" == "false" && -d "$raw" ]]; then
+  if [[ "$FORCE_PATTERN_MODE" == "false" && -d "$raw" ]]; then
     SD_mode="PATH"
     SD_path="$(cd "$raw" && pwd -P)"
     return 0
@@ -302,7 +515,7 @@ parse_search_dir() {
     inner="${inner%?}"
 
     # Path check for the inner content (Relative or Absolute)
-    if [[ "$use_regex" == "false" && -d "$inner" ]]; then
+    if [[ "$FORCE_PATTERN_MODE" == "false" && -d "$inner" ]]; then
       SD_mode="PATH"
       SD_path="$(cd "$inner" && pwd -P)"
       return 0
@@ -381,16 +594,11 @@ run_fd() {
   shift 4
   local extra_opts=("$@")
 
-  local color_opt=""
-  # Force color if output is a TTY.
-  # Hyperlinks are handled in our final output transform.
-  if [[ "$IS_TTY" == "true" ]]; then
-    color_opt="--color=always"
-  fi
-
-  local fd_args=(fd --hidden -i "${FD_EXCLUDES[@]}")
+  local fd_args=(fd --color=never --hidden -i "${FD_EXCLUDES[@]}")
   [[ -n "$NO_IGNORE" ]] && fd_args+=("$NO_IGNORE")
-  [[ -n "$color_opt" ]] && fd_args+=("$color_opt")
+  if [[ "$NO_RECURSE" == "true" ]]; then
+    fd_args+=(--max-depth 1)
+  fi
   if [[ -n "$typeflag" ]]; then
     # typeflag can be two words (e.g., "--type f")
     # shellcheck disable=SC2206
@@ -432,56 +640,177 @@ prune_children() {
   }'
 }
 
-strip_terminal_sequences() {
-  # Strip ANSI colors and OSC-8 hyperlinks (both ST and BEL terminated forms).
-  sed \
-    -e 's/\x1b\[[0-9;]*m//g' \
-    -e 's/\x1b]8;;[^\x1b]*\x1b\\//g' \
-    -e 's/\x1b]8;;\x1b\\//g' \
-    -e 's/\x1b]8;;[^\a]*\a//g'
-}
-
 add_info_transform() {
-  if [[ "$SHOW_INFO" != "true" ]]; then
+  if [[ "$LONG_FORMAT" != "true" ]]; then
     cat
     return
   fi
 
-  while IFS= read -r line; do
-    # Strip terminal escape codes to get the clean file path for stat.
-    local clean_path
-    clean_path=$(printf '%s' "$line" | strip_terminal_sequences)
+  format_size_iec() {
+    local bytes="$1"
+    LC_ALL=C awk -v bytes="$bytes" '
+      BEGIN {
+        split("B KiB MiB GiB TiB", units, " ")
+        if (bytes ~ /^[0-9]+$/) {
+          size = bytes + 0
+          unit = 1
+          while (size >= 1024 && unit < 5) {
+            size /= 1024
+            unit++
+          }
+          if (unit == 1) {
+            printf "%d %s", size, units[unit]
+          } else if (size >= 100) {
+            printf "%.0f %s", size, units[unit]
+          } else if (size >= 10) {
+            printf "%.1f %s", size, units[unit]
+          } else {
+            printf "%.2f %s", size, units[unit]
+          }
+        } else {
+          printf "%s B", bytes
+        }
+      }
+    '
+  }
 
-    # Get date and size
+  while IFS= read -r line; do
+    local clean_path
+    clean_path="$line"
+
+    # Get date/time and size
     # stat -c "%y %s" -> YYYY-MM-DD HH:MM:SS.NNN TZ SIZE
     local stat_out
     stat_out=$(stat -c "%y %s" "$clean_path" 2>/dev/null || true)
 
     if [[ -n "$stat_out" ]]; then
-      # Extract just YYYY-MM-DD and SIZE
-      # Pattern: ^(YYYY-MM-DD) ... (SIZE)$
-      # Cut or sed.
-      # sed 's/^\([0-9-]*\) .* \([0-9]*\)$/\1 \2/'
-      local info
-      info=$(echo "$stat_out" | sed 's/^\([0-9-]*\) .* \([0-9]*\)$/\1 \2/')
-      echo "$info $line"
+      local modified_date modified_time modified_datetime byte_size human_size extra
+      modified_date="${stat_out%% *}"
+      modified_time="${stat_out#* }"
+      modified_time="${modified_time%% *}"
+      modified_time="${modified_time%%.*}"
+      modified_datetime="${modified_date} ${modified_time}"
+      byte_size="${stat_out##* }"
+      human_size="$(format_size_iec "$byte_size")"
+      extra=""
+
+      if [[ "$LONG_EXTENDED" == "true" && -d "$clean_path" ]]; then
+        local file_count dir_size_bytes dir_size_human dir_size_compact
+        if [[ -L "$clean_path" ]]; then
+          file_count="0"
+          dir_size_bytes=$(stat -c "%s" "$clean_path" 2>/dev/null || echo "0")
+          dir_size_human="$(format_size_iec "$dir_size_bytes")"
+          DIR_STATS_FILES["$clean_path"]="$file_count"
+          DIR_STATS_BYTES["$clean_path"]="$dir_size_bytes"
+          DIR_STATS_HUMAN["$clean_path"]="$dir_size_human"
+        elif get_dirsize_stats "$clean_path"; then
+          file_count="$DIRSIZE_FILES"
+          dir_size_bytes="$DIRSIZE_BYTES"
+          dir_size_human="$DIRSIZE_HUMAN"
+        else
+          file_count=$(find "$clean_path" -type f -print 2>/dev/null | wc -l | tr -d '[:space:]')
+          [[ -z "$file_count" ]] && file_count="0"
+
+          # Use allocated disk usage (not apparent size) for "real" folder size.
+          dir_size_bytes=$(du -sB1 "$clean_path" 2>/dev/null | awk '{print $1}')
+          [[ -z "$dir_size_bytes" ]] && dir_size_bytes="0"
+          dir_size_human="$(format_size_iec "$dir_size_bytes")"
+          DIR_STATS_FILES["$clean_path"]="$file_count"
+          DIR_STATS_BYTES["$clean_path"]="$dir_size_bytes"
+          DIR_STATS_HUMAN["$clean_path"]="$dir_size_human"
+        fi
+        dir_size_compact="${dir_size_human}"
+        human_size="$dir_size_compact"
+        extra="$file_count"
+      fi
+
+      if [[ -n "$extra" ]]; then
+        printf '%s %s %s %s\n' "$modified_datetime" "$human_size" "$extra" "$line"
+      else
+        printf '%s %s %s\n' "$modified_datetime" "$human_size" "$line"
+      fi
     fi
   done
 }
 
+sort_results_transform() {
+  if [[ -z "$SORT_FIELD" ]]; then
+    cat
+    return
+  fi
+
+  while IFS= read -r line; do
+    local clean_path key
+    clean_path="$line"
+    case "$SORT_FIELD" in
+      date)
+        key=$(stat -c "%Y" "$clean_path" 2>/dev/null || echo "0")
+        ;;
+      size)
+        if [[ -d "$clean_path" ]]; then
+          if [[ "$LONG_EXTENDED" == "true" ]]; then
+            if [[ -L "$clean_path" ]]; then
+              key=$(stat -c "%s" "$clean_path" 2>/dev/null || echo "0")
+            elif get_dirsize_stats "$clean_path"; then
+              key="$DIRSIZE_BYTES"
+            else
+              key=$(du -sB1 "$clean_path" 2>/dev/null | awk '{print $1}')
+              [[ -z "$key" ]] && key="0"
+            fi
+          elif [[ "$NO_RECURSE" == "true" ]]; then
+            # In non-recursive mode, keep size-sort fast by using direct entry size.
+            key=$(stat -c "%s" "$clean_path" 2>/dev/null || echo "0")
+          else
+            # Sort directories by real allocated disk usage, not inode metadata size.
+            key=$(du -sB1 "$clean_path" 2>/dev/null | awk '{print $1}')
+            [[ -z "$key" ]] && key="0"
+          fi
+        else
+          key=$(stat -c "%s" "$clean_path" 2>/dev/null || echo "0")
+        fi
+        ;;
+      name)
+        key="${clean_path%/}"
+        key="${key##*/}"
+        ;;
+      *)
+        key="0"
+        ;;
+    esac
+    printf '%s\t%s\n' "$key" "$line"
+  done \
+  | {
+      if [[ "$SORT_FIELD" == "name" ]]; then
+        if [[ "$SORT_ORDER" == "asc" ]]; then
+          sort -f -k1,1 -k2,2
+        else
+          sort -rf -k1,1 -k2,2
+        fi
+      else
+        if [[ "$SORT_ORDER" == "asc" ]]; then
+          sort -n -k1,1 -k2,2
+        else
+          sort -nr -k1,1 -k2,2
+        fi
+      fi
+    } \
+  | cut -f2-
+}
+
 counts_summary_transform() {
   # Summarize matches as: <count> <folder>
-  # - strips ANSI colors and OSC-8 hyperlinks
-  # - strips optional "YYYY-MM-DD SIZE " info prefix (from --info)
+  # - strips optional long prefixes:
+  #   --long: YYYY-MM-DD HH:MM:SS SIZE UNIT
+  #   -L (dirs): YYYY-MM-DD HH:MM:SS REALDIRSIZE FILECOUNT
   # - normalizes directory matches by removing trailing "/"
   if [[ "$IS_TTY" == "true" ]]; then
     printf '%7s  %s\n' "COUNT" "FOLDER"
   fi
 
-  strip_terminal_sequences | awk '
+  awk '
     {
       line=$0
-      sub(/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]+ /, "", line)
+      sub(/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]+([.][0-9]+)? ?(B|KiB|MiB|GiB|TiB)( [0-9]+)? /, "", line)
 
       p=line
       sub(/\/$/, "", p)
@@ -514,17 +843,29 @@ add_hyperlink_transform() {
 
   local cwd_abs
   cwd_abs="$(pwd -P)"
+  local date_color=$'\033[37m'
+  local size_color=$'\033[1;36m'
+  local color_reset=$'\033[0m'
 
   while IFS= read -r line; do
-    local clean_line
     local path_part
     local abs_path
     local url_path
+    local display_line
+    local colored_path
+    local datetime_part
+    local size_part
+    local count_part
 
-    clean_line=$(printf '%s' "$line" | strip_terminal_sequences)
-    path_part="$clean_line"
-    if [[ "$SHOW_INFO" == "true" ]]; then
-      path_part=$(printf '%s' "$path_part" | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]+ //')
+    datetime_part=""
+    size_part=""
+    count_part=""
+    path_part="$line"
+    if [[ "$LONG_FORMAT" == "true" && "$line" =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2})[[:space:]]+([0-9]+([.][0-9]+)?[[:space:]]?(B|KiB|MiB|GiB|TiB))([[:space:]][0-9]+)?[[:space:]]+(.*)$ ]]; then
+      datetime_part="${BASH_REMATCH[1]}"
+      size_part="${BASH_REMATCH[2]}"
+      count_part="${BASH_REMATCH[5]}"
+      path_part="${BASH_REMATCH[6]}"
     fi
 
     if [[ -z "$path_part" ]]; then
@@ -538,13 +879,27 @@ add_hyperlink_transform() {
       abs_path="${cwd_abs}/${path_part#./}"
     fi
 
-    url_path=$(printf '%s' "$abs_path" | sed \
-      -e 's/%/%25/g' \
-      -e 's/ /%20/g' \
-      -e 's/#/%23/g' \
-      -e 's/?/%3F/g')
+    url_path="$abs_path"
+    url_path="${url_path//%/%25}"
+    url_path="${url_path// /%20}"
+    url_path="${url_path//#/%23}"
+    url_path="${url_path//\?/%3F}"
 
-    printf '\033]8;;file://%s\033\\%s\033]8;;\033\\\n' "$url_path" "$line"
+    colored_path="$(colorize_path_display "$path_part" "$abs_path")"
+
+    if [[ -n "$datetime_part" ]]; then
+      local prefix_colored
+      prefix_colored="${date_color}${datetime_part}${color_reset} ${size_color}${size_part}${color_reset}"
+      if [[ -n "$count_part" ]]; then
+        prefix_colored+="${count_part}"
+      fi
+      prefix_colored+=" "
+      display_line="${prefix_colored}${colored_path}"
+    else
+      display_line="$colored_path"
+    fi
+
+    printf '\033]8;;file://%s\033\\%s\033]8;;\033\\\n' "$url_path" "$display_line"
   done
 }
 
@@ -552,7 +907,7 @@ final_transform() {
   if [[ "$COUNTS" == "true" ]]; then
     counts_summary_transform
   else
-    add_info_transform | add_hyperlink_transform
+    sort_results_transform | add_info_transform | add_hyperlink_transform
   fi
 }
 
@@ -590,6 +945,31 @@ main() {
         force_full=true
         shift
         ;;
+      --regex|-r)
+        REGEX_MODE=true
+        shift
+        ;;
+      --sort)
+        shift
+        [[ $# -ge 2 ]] || { echo "Error: --sort requires FIELD and ORDER (e.g., --sort date desc)." >&2; exit 2; }
+        local sort_key="$1"
+        local sort_dir="$2"
+        if [[ "$sort_key" != "date" && "$sort_key" != "size" && "$sort_key" != "name" ]]; then
+          echo "Error: unsupported sort field '$sort_key'. Supported: date, size, name" >&2
+          exit 2
+        fi
+        if [[ "$sort_dir" != "asc" && "$sort_dir" != "desc" ]]; then
+          echo "Error: unsupported sort order '$sort_dir'. Supported: asc, desc" >&2
+          exit 2
+        fi
+        SORT_FIELD="$sort_key"
+        SORT_ORDER="$sort_dir"
+        shift 2
+        ;;
+      --no-recurse|-R)
+        NO_RECURSE=true
+        shift
+        ;;
       --no-ignore|-I)
         NO_IGNORE="--no-ignore"
         shift
@@ -598,9 +978,18 @@ main() {
         FORCE_PATTERN_MODE=true
         shift
         ;;
-      --info|-i)
-        SHOW_INFO=true
+      --long|-l)
+        LONG_FORMAT=true
         shift
+        ;;
+      -L)
+        LONG_FORMAT=true
+        LONG_EXTENDED=true
+        shift
+        ;;
+      --info|-i)
+        echo "f: --info/-i was renamed to --long/-l" >&2
+        exit 2
         ;;
       --counts)
         COUNTS=true
@@ -684,9 +1073,8 @@ main() {
     
     # We use a subshell to construct the pipe chain
     (
-      # Use --color=never for pipes to avoid escape codes confusing grep/awk
       # Use --full-path explicitly
-      run_fd "$search_root" "$type_arg" "$first_regex" "--full-path" --color=never \
+      run_fd "$search_root" "$type_arg" "$first_regex" "--full-path" \
       | {
         # Loop through remaining patterns and pipe through grep -P
         for ((i=1; i<${#regexes[@]}; i++)); do

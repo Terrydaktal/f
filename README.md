@@ -6,31 +6,32 @@ A parallel recursive file searcher
 Usage:
   f <filename/dirname> [<search_dir>]
   f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
-                       [--dir|-d] [--file|-f] [--bypass|-b]
-                       [--timeout N]
+                       [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
+                       [--timeout N] [--sort date|size|name asc|desc]
+                       [--no-recurse|-R]
   f (--version|-V)
 
 Arguments:
    <filename/dirname>:
-      The file or directory name to search for. Supports exact, partial,
-      and regex matching based on the pattern format (see matrix below).
+      The file or directory name to search for. Supports exact and partial
+      matching by default; use --regex/-r for regex matching.
 
    SEARCH MATRIX:
 
-   Goal           | Shorthand  | Wildcard Format | Regex Format (r"")
+   Goal           | Shorthand  | Wildcard Format | Regex Format
    ---------------|------------|-----------------|------------------
-   Contains (All) | f abc      | f "*abc*"       | f r"abc"
-   Contains (File)| f abc -f   | f "*abc*" -f    | f r"abc" -f
-   Contains (Dir) | f abc -d   | f "*abc*" -d    | f r"abc" -d
-   Exact (All)    | -          | -               | f r"^abc$"
-   Exact (File)   | -          | -               | f r"^abc$" -f
-   Exact (Dir)    | f /abc/    | -               | f r"^abc$" -d
-   Starts (All)   | f /abc     | f "abc*"        | f r"^abc"
-   Starts (File)  | f /abc -f  | f "abc*" -f     | f r"^abc" -f
-   Starts (Dir)   | f /abc -d  | f "abc*" -d     | f r"^abc" -d
-   Ends (All)     | -          | f "*abc"        | f r"abc$"
-   Ends (File)    | -          | f "*abc" -f     | f r"abc$" -f
-   Ends (Dir)     | f abc/     | f "*abc" -d     | f r"abc$" -d
+   Contains (All) | f abc      | f "*abc*"       | f -r "abc"
+   Contains (File)| f abc -f   | f "*abc*" -f    | f -r "abc" -f
+   Contains (Dir) | f abc -d   | f "*abc*" -d    | f -r "abc" -d
+   Exact (All)    | -          | -               | f -r "^abc$"
+   Exact (File)   | -          | -               | f -r "^abc$" -f
+   Exact (Dir)    | f /abc/    | -               | f -r "^abc$" -d
+   Starts (All)   | f /abc     | f "abc*"        | f -r "^abc"
+   Starts (File)  | f /abc -f  | f "abc*" -f     | f -r "^abc" -f
+   Starts (Dir)   | f /abc -d  | f "abc*" -d     | f -r "^abc" -d
+   Ends (All)     | -          | f "*abc"        | f -r "abc$"
+   Ends (File)    | -          | f "*abc" -f     | f -r "abc$" -f
+   Ends (Dir)     | f abc/     | f "*abc" -d     | f -r "abc$" -d
 
    <search_dir>:
       Location to search. Defaults to '.' (the current directory).
@@ -44,12 +45,12 @@ Arguments:
 
    SEARCH DIR MATRIX:
 
-   Goal           | Shorthand | Wildcard Format | Regex Format (r"")
+   Goal           | Shorthand | Wildcard Format | Regex Format
    ---------------|-----------|-----------------|------------------
-   Contains       | abc       | "*abc*"         | r"abc"
-   Exact          | /abc/     | -               | r"^abc$"
-   Starts         | /abc      | "abc*"          | r"^abc"
-   Ends           | abc/      | "*abc"          | r"abc$"
+   Contains       | abc       | "*abc*"         | -r "abc"
+   Exact          | /abc/     | -               | -r "^abc$"
+   Starts         | /abc      | "abc*"          | -r "^abc"
+   Ends           | abc/      | "*abc"          | -r "abc$"
 
    Note: If the 1st check (Literal Path) fails, the script performs a global
 
@@ -65,10 +66,9 @@ Arguments:
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
-  - Prefix a pattern with r and wrap in quotes to treat it as a regex
-  (e.g., f r"^test").
+  - Regex mode is only enabled with --regex/-r.
   - Plain patterns are contains. For exact matches use regex anchors
-    (e.g., r"^word$"), or /word/ for exact-directory shorthand.
+    (e.g., --regex "^word$"), or /word/ for exact-directory shorthand.
 
 Options:
   --dir, -d
@@ -78,13 +78,28 @@ Options:
   --counts
       Show a summary of matches by parent folder (folder path + count), instead
       of listing every matching file. If a directory itself matches, it counts
-      as 1 match for its parent folder. Note: --info does not change --counts
+      as 1 match for its parent folder. Note: --long does not change --counts
       output.
       Renamed from --audit (which is no longer accepted).
   --full, -F
       Match against the full absolute path instead of just the basename.
-  --info, -i
-      Show the date of last modification and size at the start of each line.
+  --regex, -r
+      Treat filename/dirname and search_dir patterns as regular expressions.
+  --long, -l
+      Show the date and time of last modification and size
+      (B, KiB, MiB, GiB, TiB) at the start of each line.
+  -L
+      Extended long output for directories:
+      YYYY-MM-DD HH:MM:SS REALDIRSIZE FILECOUNT PATH
+      Symlinked directories are not traversed (shown as link size, count 0).
+  --sort FIELD ORDER
+      Sort listed results by metadata. Supported:
+      --sort date asc|desc, --sort size asc|desc, --sort name asc|desc
+      For directories, size sort uses real allocated directory size.
+      With --no-recurse/-R, size sort uses direct entry size for speed.
+      Note: --counts output is always sorted by count/folder and ignores --sort.
+  --no-recurse, -R
+      Search only the immediate entries in each search root (no recursion).
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
