@@ -14,7 +14,7 @@ Usage:
                        [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
                        [--timeout N] [--sort date|size|name asc|desc]
                        [--no-recurse|-R] [--follow-links]
-                       [--ignore] [--visible-only]
+                       [--ignore] [--visible-only] [--threads N]
   f (--version|-V)
 
 Arguments:
@@ -91,7 +91,7 @@ Options:
   --long, -l
       Show the date and time of last modification and size
       (B, KiB, MiB, GiB, TiB) at the start of each line.
-  -L
+  -L, --long-true-dirsize
       Extended long output for directories:
       YYYY-MM-DD HH:MM:SS REALDIRSIZE FILECOUNT PATH
       Symlinked directories are not traversed (shown as link size, count 0).
@@ -111,6 +111,9 @@ Options:
   --visible-only
       Exclude hidden files/directories (dotfiles). By default, f includes
       hidden entries.
+  --threads N
+      Set worker thread count for fd and directory size calculations.
+      Must be a positive integer. Default: 8.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
@@ -138,6 +141,7 @@ NO_RECURSE=false
 FOLLOW_LINKS=false
 RESPECT_IGNORE=false
 VISIBLE_ONLY=false
+THREADS_OVERRIDE="8"
 DIRSIZE_THREADS=8
 HAVE_DIRSIZE=false
 if command -v dirsize >/dev/null 2>&1; then
@@ -311,6 +315,97 @@ colorize_path_display() {
     color_wrap "$leaf_code" "$leaf"
   else
     color_wrap "$leaf_code" "$display_path"
+  fi
+}
+
+escape_file_url_path() {
+  local url_path="$1"
+  url_path="${url_path//%/%25}"
+  url_path="${url_path// /%20}"
+  url_path="${url_path//#/%23}"
+  url_path="${url_path//\?/%3F}"
+  printf '%s' "$url_path"
+}
+
+display_path_to_abs_path() {
+  # display_path_to_abs_path <display_path> <cwd_abs>
+  local display_path="$1"
+  local cwd_abs="$2"
+  if [[ "$display_path" == /* ]]; then
+    printf '%s' "$display_path"
+  else
+    printf '%s/%s' "$cwd_abs" "${display_path#./}"
+  fi
+}
+
+make_hyperlink_text() {
+  # make_hyperlink_text <abs_target> <display_text>
+  local abs_target="$1"
+  local display_text="$2"
+  printf '%b%s%b%s%b' \
+    $'\033]8;;file://' \
+    "$(escape_file_url_path "$abs_target")" \
+    $'\033\\' \
+    "$display_text" \
+    $'\033]8;;\033\\'
+}
+
+render_split_hyperlinked_path() {
+  # render_split_hyperlinked_path <display_path> <abs_path> <cwd_abs>
+  # Emits two OSC-8 links when possible:
+  # - prefix path -> parent directory
+  # - leaf segment -> file/dir itself
+  local display_path="$1"
+  local abs_path="$2"
+  local cwd_abs="$3"
+  local prefix_display="" leaf_display=""
+  local prefix_abs="" leaf_abs="$abs_path"
+  local leaf_code leaf_colored prefix_colored leaf_name path_core
+
+  if [[ "$display_path" == */ ]]; then
+    path_core="${display_path%/}"
+    if [[ -z "$path_core" ]]; then
+      leaf_display="/"
+    elif [[ "$path_core" == */* ]]; then
+      prefix_display="${path_core%/*}/"
+      leaf_display="${path_core##*/}/"
+    else
+      leaf_display="${path_core}/"
+    fi
+  else
+    if [[ "$display_path" == */* ]]; then
+      prefix_display="${display_path%/*}/"
+      leaf_display="${display_path##*/}"
+    else
+      leaf_display="$display_path"
+    fi
+  fi
+
+  if [[ -n "$prefix_display" ]]; then
+    prefix_abs="$(display_path_to_abs_path "$prefix_display" "$cwd_abs")"
+  fi
+
+  if [[ "$display_path" == */ ]]; then
+    if [[ -n "$prefix_abs" ]]; then
+      leaf_name="${leaf_display%/}"
+      leaf_abs="${prefix_abs%/}/${leaf_name}/"
+    else
+      leaf_abs="$abs_path"
+    fi
+  else
+    leaf_abs="$abs_path"
+  fi
+
+  leaf_code="$(color_code_for_path "$abs_path" "$display_path")"
+  leaf_colored="$(color_wrap "$leaf_code" "$leaf_display")"
+
+  if [[ -n "$prefix_display" ]]; then
+    prefix_colored="$(color_wrap "$COLOR_PREFIX_DIR" "$prefix_display")"
+    printf '%s%s' \
+      "$(make_hyperlink_text "$prefix_abs" "$prefix_colored")" \
+      "$(make_hyperlink_text "$leaf_abs" "$leaf_colored")"
+  else
+    printf '%s' "$(make_hyperlink_text "$leaf_abs" "$leaf_colored")"
   fi
 }
 
@@ -596,6 +691,16 @@ print_version() {
   printf 'f %s\n' "$VERSION"
 }
 
+set_threads_value() {
+  local n="$1"
+  if [[ ! "$n" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Error: --threads requires a positive integer." >&2
+    exit 2
+  fi
+  THREADS_OVERRIDE="$n"
+  DIRSIZE_THREADS="$n"
+}
+
 run_fd() {
   # run_fd <root> <typeflag-or-empty> <regex> <pathflag-or-empty> [extra-fd-opts...]
   local root="$1"
@@ -608,6 +713,9 @@ run_fd() {
   local fd_args=(fd --color=never -i "${FD_EXCLUDES[@]}")
   if [[ "$RESPECT_IGNORE" != "true" ]]; then
     fd_args+=(--no-ignore)
+  fi
+  if [[ -n "$THREADS_OVERRIDE" ]]; then
+    fd_args+=(--threads "$THREADS_OVERRIDE")
   fi
   if [[ "$VISIBLE_ONLY" != "true" ]]; then
     fd_args+=(--hidden)
@@ -637,6 +745,9 @@ find_dirs_anywhere_nul() {
   local fd_args=(fd -i "${FD_EXCLUDES[@]}")
   if [[ "$RESPECT_IGNORE" != "true" ]]; then
     fd_args+=(--no-ignore)
+  fi
+  if [[ -n "$THREADS_OVERRIDE" ]]; then
+    fd_args+=(--threads "$THREADS_OVERRIDE")
   fi
   if [[ "$VISIBLE_ONLY" != "true" ]]; then
     fd_args+=(--hidden)
@@ -877,9 +988,8 @@ add_hyperlink_transform() {
   while IFS= read -r line; do
     local path_part
     local abs_path
-    local url_path
     local display_line
-    local colored_path
+    local linked_path
     local datetime_part
     local size_part
     local count_part
@@ -906,13 +1016,7 @@ add_hyperlink_transform() {
       abs_path="${cwd_abs}/${path_part#./}"
     fi
 
-    url_path="$abs_path"
-    url_path="${url_path//%/%25}"
-    url_path="${url_path// /%20}"
-    url_path="${url_path//#/%23}"
-    url_path="${url_path//\?/%3F}"
-
-    colored_path="$(colorize_path_display "$path_part" "$abs_path")"
+    linked_path="$(render_split_hyperlinked_path "$path_part" "$abs_path" "$cwd_abs")"
 
     if [[ -n "$datetime_part" ]]; then
       local prefix_colored
@@ -921,12 +1025,12 @@ add_hyperlink_transform() {
         prefix_colored+="${count_part}"
       fi
       prefix_colored+=" "
-      display_line="${prefix_colored}${colored_path}"
+      display_line="${prefix_colored}${linked_path}"
     else
-      display_line="$colored_path"
+      display_line="$linked_path"
     fi
 
-    printf '\033]8;;file://%s\033\\%s\033]8;;\033\\\n' "$url_path" "$display_line"
+    printf '%s\n' "$display_line"
   done
 }
 
@@ -958,6 +1062,16 @@ main() {
         ;;
       --timeout=*)
         timeout_dur="$(normalize_timeout "${1#*=}")"
+        shift
+        ;;
+      --threads)
+        shift
+        [[ $# -gt 0 ]] || { echo "Error: --threads requires a value." >&2; exit 2; }
+        set_threads_value "$1"
+        shift
+        ;;
+      --threads=*)
+        set_threads_value "${1#*=}"
         shift
         ;;
       --dir|-d)
@@ -1017,7 +1131,7 @@ main() {
         LONG_FORMAT=true
         shift
         ;;
-      -L)
+      -L|--long-true-dirsize)
         LONG_FORMAT=true
         LONG_EXTENDED=true
         shift

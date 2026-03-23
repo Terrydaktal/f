@@ -221,6 +221,11 @@ want_non_recursive='abc_top'
 assert_eq "recursive default" "$(list_rel "$NONREC_ROOT" abc -f)" "$want_recursive"
 assert_eq "no recurse" "$(list_rel "$NONREC_ROOT" abc -f --no-recurse)" "$want_non_recursive"
 assert_eq "no recurse alias -R" "$(list_rel "$NONREC_ROOT" abc -f -R)" "$want_non_recursive"
+assert_eq "threads flag (space form)" "$(list_rel "$NONREC_ROOT" abc -f --threads 1)" "$want_recursive"
+assert_eq "threads flag (equals form)" "$(list_rel "$NONREC_ROOT" abc -f --threads=1)" "$want_recursive"
+
+threads_err="$("$F" --timeout "$F_TIMEOUT" --threads 0 abc "$NONREC_ROOT" 2>&1 >/dev/null || true)"
+assert_contains "threads invalid value errors" "$threads_err" "--threads requires a positive integer"
 
 # VISIBILITY MATRIX
 VISIBLE_ROOT="${TMP_BASE}/visible_root"
@@ -272,6 +277,8 @@ touch "${LONG_ROOT}/folder_match/a" "${LONG_ROOT}/folder_match/b" "${LONG_ROOT}/
 long_out="$("$F" --timeout "$F_TIMEOUT" -L -d folder "$LONG_ROOT" 2>/dev/null)"
 assert_regex "extended long format" "$long_out" '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]+([.][0-9]+)? ?(B|KiB|MiB|GiB|TiB) [0-9]+ .+/$'
 assert_contains "extended long file count value" "$long_out" " 3 "
+long_out_alias="$("$F" --timeout "$F_TIMEOUT" --long-true-dirsize -d folder "$LONG_ROOT" 2>/dev/null)"
+assert_regex "extended long alias format" "$long_out_alias" '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]+([.][0-9]+)? ?(B|KiB|MiB|GiB|TiB) [0-9]+ .+/$'
 
 LONG_SYM_ROOT="${TMP_BASE}/long_sym_root"
 mkdir -p "${LONG_SYM_ROOT}/real_dir"

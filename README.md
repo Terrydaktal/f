@@ -9,7 +9,7 @@ Usage:
                        [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
                        [--timeout N] [--sort date|size|name asc|desc]
                        [--no-recurse|-R] [--follow-links]
-                       [--ignore] [--visible-only]
+                       [--ignore] [--visible-only] [--threads N]
   f (--version|-V)
 
 Arguments:
@@ -89,7 +89,7 @@ Options:
   --long, -l
       Show the date and time of last modification and size
       (B, KiB, MiB, GiB, TiB) at the start of each line.
-  -L
+  -L, --long-true-dirsize
       Extended long output for directories:
       YYYY-MM-DD HH:MM:SS REALDIRSIZE FILECOUNT PATH
       Symlinked directories are not traversed (shown as link size, count 0).
@@ -109,6 +109,9 @@ Options:
   --visible-only
       Exclude hidden files/directories (dotfiles). By default, f includes
       hidden entries.
+  --threads N
+      Set worker thread count for fd and directory size calculations.
+      Must be a positive integer. Default: 8.
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
