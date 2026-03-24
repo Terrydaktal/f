@@ -1,5 +1,25 @@
 # f - Parallel Recursive File Searcher
 
+`f` is now implemented in Rust.
+
+Build:
+
+```bash
+cargo build --release
+```
+
+Run from this repo:
+
+```bash
+./target/release/f --help
+```
+
+Install to your PATH:
+
+```bash
+install -Dm755 ./target/release/f ~/.local/bin/f
+```
+
 ```
 A parallel recursive file searcher
 

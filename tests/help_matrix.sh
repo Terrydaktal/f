@@ -2,8 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-F="${ROOT_DIR}/f"
+F_BIN="${F_BIN:-${ROOT_DIR}/target/release/f}"
 F_TIMEOUT="6"
+
+if [[ ! -x "$F_BIN" || "${ROOT_DIR}/src/main.rs" -nt "$F_BIN" || "${ROOT_DIR}/Cargo.toml" -nt "$F_BIN" ]]; then
+  cargo build --release --quiet --manifest-path "${ROOT_DIR}/Cargo.toml"
+fi
+
+F="$F_BIN"
 
 assert_eq() {
   local name="$1"

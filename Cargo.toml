@@ -1,0 +1,12 @@
+[package]
+name = "f-cli"
+version = "0.7.9"
+edition = "2021"
+
+[[bin]]
+name = "f"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+regex = "1"
