@@ -7,9 +7,10 @@ Usage:
   f <filename/dirname> [<search_dir>]
   f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
                        [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
+                       [--absolute-paths|-A]
                        [--timeout N] [--sort date|size|name asc|desc]
                        [--no-recurse|-R] [--follow-links]
-                       [--ignore] [--visible-only] [--threads N]
+                       [--ignore] [--visible-only] [--threads N] [--cache-raw]
   f (--version|-V)
 
 Arguments:
@@ -84,6 +85,9 @@ Options:
       Renamed from --audit (which is no longer accepted).
   --full, -F
       Match against the full absolute path instead of just the basename.
+  --absolute-paths, -A
+      Print absolute paths in output (display only). Does not change matching
+      behavior.
   --regex, -r
       Treat filename/dirname and search_dir patterns as regular expressions.
   --long, -l
@@ -112,6 +116,13 @@ Options:
   --threads N
       Set worker thread count for fd and directory size calculations.
       Must be a positive integer. Default: 8.
+  --cache-raw
+      Save matched directories to:
+      /tmp/fzf-history-$USER/universal-last-dirs-<fish pid>
+      and files to:
+      /tmp/fzf-history-$USER/universal-last-files-<fish pid>
+      For every match, also save its parent directory to the dirs file.
+      Renamed from --cache (which is no longer accepted).
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m

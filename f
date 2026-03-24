@@ -12,9 +12,10 @@ Usage:
   f <filename/dirname> [<search_dir>]
   f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
                        [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
+                       [--absolute-paths|-A]
                        [--timeout N] [--sort date|size|name asc|desc]
                        [--no-recurse|-R] [--follow-links]
-                       [--ignore] [--visible-only] [--threads N]
+                       [--ignore] [--visible-only] [--threads N] [--cache-raw]
   f (--version|-V)
 
 Arguments:
@@ -86,6 +87,9 @@ Options:
       Renamed from --audit (which is no longer accepted).
   --full, -F
       Match against the full absolute path instead of just the basename.
+  --absolute-paths, -A
+      Print absolute paths in output (display only). Does not change matching
+      behavior.
   --regex, -r
       Treat filename/dirname and search_dir patterns as regular expressions.
   --long, -l
@@ -114,6 +118,13 @@ Options:
   --threads N
       Set worker thread count for fd and directory size calculations.
       Must be a positive integer. Default: 8.
+  --cache-raw
+      Save matched directories to:
+      /tmp/fzf-history-$USER/universal-last-dirs-<fish pid>
+      and files to:
+      /tmp/fzf-history-$USER/universal-last-files-<fish pid>
+      For every match, also save its parent directory to the dirs file.
+      Renamed from --cache (which is no longer accepted).
   --timeout N
       Per-invocation timeout for each fd call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
@@ -143,6 +154,8 @@ RESPECT_IGNORE=false
 VISIBLE_ONLY=false
 THREADS_OVERRIDE="8"
 DIRSIZE_THREADS=8
+CACHE_OUTPUT=false
+ABSOLUTE_PATHS=false
 HAVE_DIRSIZE=false
 if command -v dirsize >/dev/null 2>&1; then
   HAVE_DIRSIZE=true
@@ -972,6 +985,77 @@ counts_summary_transform() {
   | awk -F"\t" '{ printf "%7d  %s\n", $1, $2 }'
 }
 
+cache_transform() {
+  # Cache raw matched paths before pretty rendering.
+  # Also cache the parent directory of every match in dirs cache.
+  if [[ "$CACHE_OUTPUT" != "true" ]]; then
+    cat
+    return
+  fi
+
+  local cache_user cache_pid cache_dir dirs_file files_file parent_comm
+  cache_user="${USER:-$(id -un 2>/dev/null || echo unknown)}"
+  cache_pid=""
+
+  if [[ "${FISH_PID:-}" =~ ^[0-9]+$ ]]; then
+    cache_pid="$FISH_PID"
+  elif [[ "${fish_pid:-}" =~ ^[0-9]+$ ]]; then
+    cache_pid="$fish_pid"
+  elif [[ "${PPID:-}" =~ ^[0-9]+$ ]]; then
+    parent_comm="$(ps -p "$PPID" -o comm= 2>/dev/null || true)"
+    if [[ "$parent_comm" == "fish" ]]; then
+      cache_pid="$PPID"
+    fi
+  fi
+  if [[ -z "$cache_pid" ]]; then
+    cache_pid="$$"
+  fi
+
+  cache_dir="/tmp/fzf-history-${cache_user}"
+  dirs_file="${cache_dir}/universal-last-dirs-${cache_pid}"
+  files_file="${cache_dir}/universal-last-files-${cache_pid}"
+
+  mkdir -p "$cache_dir"
+  : > "$dirs_file"
+  : > "$files_file"
+  awk -v dirs_file="$dirs_file" -v files_file="$files_file" '
+    {
+      path=$0
+      print path
+
+      # Cache matched file paths.
+      if (path !~ /\/$/ && !(path in seen_files)) {
+        print path >> files_file
+        seen_files[path]=1
+      }
+
+      # Cache matched directory paths.
+      if (path ~ /\/$/ && !(path in seen_dirs)) {
+        print path >> dirs_file
+        seen_dirs[path]=1
+      }
+
+      # Cache parent directory of every match.
+      parent=path
+      sub(/\/$/, "", parent)
+      if (parent ~ /\//) {
+        sub(/\/[^\/]+$/, "", parent)
+        if (parent == "") {
+          parent="/"
+        } else if (parent !~ /\/$/) {
+          parent=parent "/"
+        }
+      } else {
+        parent="./"
+      }
+      if (!(parent in seen_dirs)) {
+        print parent >> dirs_file
+        seen_dirs[parent]=1
+      }
+    }
+  '
+}
+
 add_hyperlink_transform() {
   # Render final output lines as clickable file:// links in TTYs.
   if [[ "$IS_TTY" != "true" ]]; then
@@ -1034,11 +1118,29 @@ add_hyperlink_transform() {
   done
 }
 
+absolute_paths_transform() {
+  # Convert raw result paths to absolute paths for output/cache stages.
+  if [[ "$ABSOLUTE_PATHS" != "true" ]]; then
+    cat
+    return
+  fi
+
+  local cwd_abs
+  cwd_abs="$(pwd -P)"
+  while IFS= read -r path; do
+    if [[ "$path" == /* ]]; then
+      printf '%s\n' "$path"
+    else
+      printf '%s/%s\n' "$cwd_abs" "${path#./}"
+    fi
+  done
+}
+
 final_transform() {
   if [[ "$COUNTS" == "true" ]]; then
-    counts_summary_transform
+    absolute_paths_transform | cache_transform | counts_summary_transform
   else
-    sort_results_transform | add_info_transform | add_hyperlink_transform
+    sort_results_transform | absolute_paths_transform | cache_transform | add_info_transform | add_hyperlink_transform
   fi
 }
 
@@ -1086,6 +1188,10 @@ main() {
         force_full=true
         shift
         ;;
+      --absolute-paths|-A)
+        ABSOLUTE_PATHS=true
+        shift
+        ;;
       --regex|-r)
         REGEX_MODE=true
         shift
@@ -1122,6 +1228,14 @@ main() {
       --visible-only)
         VISIBLE_ONLY=true
         shift
+        ;;
+      --cache-raw)
+        CACHE_OUTPUT=true
+        shift
+        ;;
+      --cache)
+        echo "f: --cache was renamed to --cache-raw" >&2
+        exit 2
         ;;
       --bypass|-b)
         FORCE_PATTERN_MODE=true

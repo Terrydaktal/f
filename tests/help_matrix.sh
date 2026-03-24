@@ -224,8 +224,38 @@ assert_eq "no recurse alias -R" "$(list_rel "$NONREC_ROOT" abc -f -R)" "$want_no
 assert_eq "threads flag (space form)" "$(list_rel "$NONREC_ROOT" abc -f --threads 1)" "$want_recursive"
 assert_eq "threads flag (equals form)" "$(list_rel "$NONREC_ROOT" abc -f --threads=1)" "$want_recursive"
 
+# ABSOLUTE OUTPUT MATRIX
+ABS_ROOT="${TMP_BASE}/abs_root"
+mkdir -p "$ABS_ROOT"
+touch "${ABS_ROOT}/absolute_probe"
+assert_regex "default output is relative paths" "$(cd "$ABS_ROOT" && "$F" --timeout "$F_TIMEOUT" absolute_probe -f 2>/dev/null)" '^(\./)?absolute_probe$'
+assert_eq "absolute paths output with -A" "$(cd "$ABS_ROOT" && "$F" --timeout "$F_TIMEOUT" absolute_probe -f -A 2>/dev/null)" "${ABS_ROOT}/absolute_probe"
+assert_eq "absolute paths output with --absolute-paths" "$(cd "$ABS_ROOT" && "$F" --timeout "$F_TIMEOUT" absolute_probe -f --absolute-paths 2>/dev/null)" "${ABS_ROOT}/absolute_probe"
+
 threads_err="$("$F" --timeout "$F_TIMEOUT" --threads 0 abc "$NONREC_ROOT" 2>&1 >/dev/null || true)"
 assert_contains "threads invalid value errors" "$threads_err" "--threads requires a positive integer"
+
+# CACHE-RAW MATRIX
+CACHE_USER="f_cache_test_${RANDOM}_$$"
+CACHE_FISH_PID="424242"
+CACHE_ROOT="/tmp/fzf-history-${CACHE_USER}"
+rm -rf "$CACHE_ROOT"
+cache_raw_out="$(USER="$CACHE_USER" FISH_PID="$CACHE_FISH_PID" "$F" --timeout "$F_TIMEOUT" --cache-raw abc -f "$FILE_ROOT" 2>/dev/null | sed "s#^${FILE_ROOT}/##" | sort)"
+assert_eq "cache-raw output unchanged" "$cache_raw_out" "$want_contains"
+cache_raw_dirs_file="${CACHE_ROOT}/universal-last-dirs-${CACHE_FISH_PID}"
+cache_raw_files_file="${CACHE_ROOT}/universal-last-files-${CACHE_FISH_PID}"
+cache_raw_saved_files="$(sed "s#^${FILE_ROOT}/##" "$cache_raw_files_file" | sort)"
+assert_eq "cache-raw writes files cache" "$cache_raw_saved_files" "$want_contains"
+cache_raw_saved_dirs_from_file="$(sort "$cache_raw_dirs_file")"
+assert_eq "cache-raw writes parent dir for file search" "$cache_raw_saved_dirs_from_file" "${FILE_ROOT}/"
+USER="$CACHE_USER" FISH_PID="$CACHE_FISH_PID" "$F" --timeout "$F_TIMEOUT" --cache-raw abc -d "$DIR_ROOT" >/dev/null 2>&1
+cache_raw_saved_dirs="$(sort "$cache_raw_dirs_file")"
+want_cache_raw_dirs=$(printf '%s\n' "${DIR_ROOT}/" "${DIR_ROOT}/abc/" "${DIR_ROOT}/abcx/" "${DIR_ROOT}/xabc/" "${DIR_ROOT}/xabcx/" | sort)
+assert_eq "cache-raw writes dirs cache (matches + parent)" "$cache_raw_saved_dirs" "$want_cache_raw_dirs"
+assert_eq "cache-raw files cache empty for dir search" "$(cat "$cache_raw_files_file")" ""
+rm -rf "$CACHE_ROOT"
+cache_legacy_err="$("$F" --timeout "$F_TIMEOUT" --cache abc "$FILE_ROOT" 2>&1 >/dev/null || true)"
+assert_contains "legacy cache flag errors" "$cache_legacy_err" "--cache was renamed to --cache-raw"
 
 # VISIBILITY MATRIX
 VISIBLE_ROOT="${TMP_BASE}/visible_root"
