@@ -1,6 +1,6 @@
-# f - Parallel Recursive File Searcher
+# unearth - Parallel Recursive File Searcher
 
-`f` is now implemented in Rust.
+`unearth` is implemented in Rust.
 
 Build:
 
@@ -11,27 +11,28 @@ cargo build --release
 Run from this repo:
 
 ```bash
-./target/release/f --help
+./target/release/unearth --help
 ```
 
 Install to your PATH:
 
 ```bash
-install -Dm755 ./target/release/f ~/.local/bin/f
+install -Dm755 ./target/release/unearth ~/.local/bin/unearth
 ```
 
 ```
 A parallel recursive file searcher
 
 Usage:
-  f <filename/dirname> [<search_dir>]
-  f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
+  unearth <filename/dirname> [<search_dir>]
+  unearth (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
                        [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
+                       [--classify|-C]
                        [--absolute-paths|-A]
                        [--timeout N] [--sort date|size|name asc|desc]
                        [--no-recurse|-R] [--follow-links]
-                       [--ignore] [--visible-only] [--threads N] [--cache-raw]
-  f (--version|-V)
+                       [--ignore] [--hidden|-H] [--threads N] [--cache-raw]
+  unearth (--version|-V)
 
 Arguments:
    <filename/dirname>:
@@ -40,20 +41,20 @@ Arguments:
 
    SEARCH MATRIX:
 
-   Goal           | Shorthand  | Wildcard Format | Regex Format
-   ---------------|------------|-----------------|------------------
-   Contains (All) | f abc      | f "*abc*"       | f -r "abc"
-   Contains (File)| f abc -f   | f "*abc*" -f    | f -r "abc" -f
-   Contains (Dir) | f abc -d   | f "*abc*" -d    | f -r "abc" -d
-   Exact (All)    | -          | -               | f -r "^abc$"
-   Exact (File)   | -          | -               | f -r "^abc$" -f
-   Exact (Dir)    | f /abc/    | -               | f -r "^abc$" -d
-   Starts (All)   | f /abc     | f "abc*"        | f -r "^abc"
-   Starts (File)  | f /abc -f  | f "abc*" -f     | f -r "^abc" -f
-   Starts (Dir)   | f /abc -d  | f "abc*" -d     | f -r "^abc" -d
-   Ends (All)     | -          | f "*abc"        | f -r "abc$"
-   Ends (File)    | -          | f "*abc" -f     | f -r "abc$" -f
-   Ends (Dir)     | f abc/     | f "*abc" -d     | f -r "abc$" -d
+   Goal           | Shorthand      | Wildcard Format | Regex Format
+   ---------------|----------------|-----------------|------------------
+   Contains (All) | unearth abc    | unearth "*abc*" | unearth -r "abc"
+   Contains (File)| unearth abc -f | unearth "*abc*" -f| unearth -r "abc" -f
+   Contains (Dir) | unearth abc -d | unearth "*abc*" -d| unearth -r "abc" -d
+   Exact (All)    | -              | -               | unearth -r "^abc$"
+   Exact (File)   | -              | -               | unearth -r "^abc$" -f
+   Exact (Dir)    | unearth /abc/  | -               | unearth -r "^abc$" -d
+   Starts (All)   | unearth /abc   | unearth "abc*"  | unearth -r "^abc"
+   Starts (File)  | unearth /abc -f| unearth "abc*" -f| unearth -r "^abc" -f
+   Starts (Dir)   | unearth /abc -d| unearth "abc*" -d| unearth -r "^abc" -d
+   Ends (All)     | -              | unearth "*abc"  | unearth -r "abc$"
+   Ends (File)    | -              | unearth "*abc" -f| unearth -r "abc$" -f
+   Ends (Dir)     | unearth abc/   | unearth "*abc" -d| unearth -r "abc$" -d
 
    <search_dir>:
       Location to search. Defaults to '.' (the current directory).
@@ -74,16 +75,13 @@ Arguments:
    Starts         | /abc      | "abc*"          | -r "^abc"
    Ends           | abc/      | "*abc"          | -r "abc$"
 
-   Note: If the 1st check (Literal Path) fails, the script performs a global
-
-
    The --full flag matches against the full absolute path instead of just
    the basename.
    It supports multiple patterns (implicit AND) and prunes redundant
    child results.
 
-   Example: f --full "src" "main"   # Matches BOTH (hides children)
-   Example: f --full "test"         # Returns /path/to/test, but hides
+   Example: unearth --full "src" "main"   # Matches BOTH (hides children)
+   Example: unearth --full "test"         # Returns /path/to/test, but hides
    /path/to/test/file
 
 Notes:
@@ -102,9 +100,11 @@ Options:
       of listing every matching file. If a directory itself matches, it counts
       as 1 match for its parent folder. Note: --long does not change --counts
       output.
-      Renamed from --audit (which is no longer accepted).
   --full, -F
       Match against the full absolute path instead of just the basename.
+  --classify, -C
+      Force classifier decorators in output (`/`, `@`, `|`, `=`, `*`) even
+      when stdout is not a TTY.
   --absolute-paths, -A
       Print absolute paths in output (display only). Does not change matching
       behavior.
@@ -128,13 +128,13 @@ Options:
   --follow-links
       Follow symlinked directories while searching.
   --ignore
-      Respect ignore rules (.gitignore/.ignore/.fdignore). By default, f
+      Respect ignore rules (.gitignore/.ignore/.fdignore). By default, unearth
       bypasses ignore rules.
   --visible-only
-      Exclude hidden files/directories (dotfiles). By default, f includes
+      Exclude hidden files/directories (dotfiles). By default, unearth includes
       hidden entries.
   --threads N
-      Set worker thread count for fd and directory size calculations.
+      Set worker thread count for unearth and directory size calculations.
       Must be a positive integer. Default: 8.
   --cache-raw
       Save matched directories to:
@@ -142,9 +142,8 @@ Options:
       and files to:
       /tmp/fzf-history-$USER/universal-last-files-<fish pid>
       For every match, also save its parent directory to the dirs file.
-      Renamed from --cache (which is no longer accepted).
   --timeout N
-      Per-invocation timeout for each fd call. Default: 6s
+      Per-invocation timeout for each unearth call. Default: 6s
       Examples: --timeout 10, --timeout 10s, --timeout 2m
   --bypass, -b
       Force treating the search_dir as a pattern, even if it exists as

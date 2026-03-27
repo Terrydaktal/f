@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-F_BIN="${F_BIN:-${ROOT_DIR}/target/release/f}"
+F_BIN="${F_BIN:-${ROOT_DIR}/target/release/unearth}"
 F_TIMEOUT="6"
 
 if [[ ! -x "$F_BIN" || "${ROOT_DIR}/src/main.rs" -nt "$F_BIN" || "${ROOT_DIR}/Cargo.toml" -nt "$F_BIN" ]]; then
@@ -69,7 +69,7 @@ list_parent_dirs() {
   "$F" --timeout "$F_TIMEOUT" "$@" 2>/dev/null | xargs -r -n1 dirname | sort -u
 }
 
-TMP_BASE="/tmp/f_help_matrix_${RANDOM}_$$"
+TMP_BASE="/tmp/unearth_help_matrix_${RANDOM}_$$"
 FILE_ROOT="${TMP_BASE}/file_root"
 DIR_ROOT="${TMP_BASE}/dir_root"
 SD_BASE="${TMP_BASE}/search_dir_root"
@@ -227,8 +227,13 @@ want_non_recursive='abc_top'
 assert_eq "recursive default" "$(list_rel "$NONREC_ROOT" abc -f)" "$want_recursive"
 assert_eq "no recurse" "$(list_rel "$NONREC_ROOT" abc -f --no-recurse)" "$want_non_recursive"
 assert_eq "no recurse alias -R" "$(list_rel "$NONREC_ROOT" abc -f -R)" "$want_non_recursive"
+assert_eq "no recurse+file combined short -Rf" "$(list_rel "$NONREC_ROOT" abc -Rf)" "$want_non_recursive"
 assert_eq "threads flag (space form)" "$(list_rel "$NONREC_ROOT" abc -f --threads 1)" "$want_recursive"
 assert_eq "threads flag (equals form)" "$(list_rel "$NONREC_ROOT" abc -f --threads=1)" "$want_recursive"
+
+cluster_full_sep="$("$F" --timeout "$F_TIMEOUT" -F -H abc "$FILE_ROOT" 2>/dev/null | sed "s#^${FILE_ROOT}/##" | sort)"
+cluster_full_combined="$("$F" --timeout "$F_TIMEOUT" -FH abc "$FILE_ROOT" 2>/dev/null | sed "s#^${FILE_ROOT}/##" | sort)"
+assert_eq "combined short -FH equals separated -F -H" "$cluster_full_combined" "$cluster_full_sep"
 
 # ABSOLUTE OUTPUT MATRIX
 ABS_ROOT="${TMP_BASE}/abs_root"
@@ -238,11 +243,23 @@ assert_regex "default output is relative paths" "$(cd "$ABS_ROOT" && "$F" --time
 assert_eq "absolute paths output with -A" "$(cd "$ABS_ROOT" && "$F" --timeout "$F_TIMEOUT" absolute_probe -f -A 2>/dev/null)" "${ABS_ROOT}/absolute_probe"
 assert_eq "absolute paths output with --absolute-paths" "$(cd "$ABS_ROOT" && "$F" --timeout "$F_TIMEOUT" absolute_probe -f --absolute-paths 2>/dev/null)" "${ABS_ROOT}/absolute_probe"
 
+# CLASSIFY MATRIX
+CLASSIFY_ROOT="${TMP_BASE}/classify_root"
+mkdir -p "$CLASSIFY_ROOT"
+touch "${CLASSIFY_ROOT}/target_file"
+ln -s target_file "${CLASSIFY_ROOT}/link_file"
+classify_default="$("$F" --timeout "$F_TIMEOUT" link_file -f "$CLASSIFY_ROOT" 2>/dev/null | sed "s#^${CLASSIFY_ROOT}/##")"
+classify_forced="$("$F" --timeout "$F_TIMEOUT" link_file -f -C "$CLASSIFY_ROOT" 2>/dev/null | sed "s#^${CLASSIFY_ROOT}/##")"
+classify_combined="$("$F" --timeout "$F_TIMEOUT" link_file -Cf "$CLASSIFY_ROOT" 2>/dev/null | sed "s#^${CLASSIFY_ROOT}/##")"
+assert_eq "classify default off on non-tty" "$classify_default" "link_file"
+assert_eq "classify enabled by -C" "$classify_forced" "link_file@"
+assert_eq "classify enabled by combined -Cf" "$classify_combined" "link_file@"
+
 threads_err="$("$F" --timeout "$F_TIMEOUT" --threads 0 abc "$NONREC_ROOT" 2>&1 >/dev/null || true)"
 assert_contains "threads invalid value errors" "$threads_err" "--threads requires a positive integer"
 
 # CACHE-RAW MATRIX
-CACHE_USER="f_cache_test_${RANDOM}_$$"
+CACHE_USER="unearth_cache_test_${RANDOM}_$$"
 CACHE_FISH_PID="424242"
 CACHE_ROOT="/tmp/fzf-history-${CACHE_USER}"
 rm -rf "$CACHE_ROOT"
@@ -267,10 +284,10 @@ assert_contains "legacy cache flag errors" "$cache_legacy_err" "--cache was rena
 VISIBLE_ROOT="${TMP_BASE}/visible_root"
 mkdir -p "$VISIBLE_ROOT"
 touch "${VISIBLE_ROOT}/.hidden_hit" "${VISIBLE_ROOT}/visible_hit"
-want_visible_default=$'.hidden_hit\nvisible_hit'
-want_visible_only='visible_hit'
-assert_eq "default includes hidden entries" "$(list_rel "$VISIBLE_ROOT" '*hit' -f)" "$want_visible_default"
-assert_eq "visible-only excludes hidden entries" "$(list_rel "$VISIBLE_ROOT" '*hit' -f --visible-only)" "$want_visible_only"
+want_visible_default='visible_hit'
+want_visible_all=$'.hidden_hit\nvisible_hit'
+assert_eq "default excludes hidden entries" "$(list_rel "$VISIBLE_ROOT" '*hit' -f)" "$want_visible_default"
+assert_eq "hidden flag includes hidden entries" "$(list_rel "$VISIBLE_ROOT" '*hit' -f --hidden)" "$want_visible_all"
 
 # IGNORE MATRIX
 IGNORE_ROOT="${TMP_BASE}/ignore_root"

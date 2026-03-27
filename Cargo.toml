@@ -1,12 +1,15 @@
 [package]
-name = "f-cli"
-version = "0.7.9"
+name = "unearth"
+version = "0.8.6"
 edition = "2021"
 
 [[bin]]
-name = "f"
+name = "unearth"
 path = "src/main.rs"
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex = "1"
+rayon = "1"
+crossbeam-channel = "0.5"
+jemallocator = "0.5"

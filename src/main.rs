@@ -1,15 +1,25 @@
 use chrono::{DateTime, Local};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, File};
-use std::io::{self, IsTerminal, Write};
-use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+use std::io::{self, BufWriter, IsTerminal, Write};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
-const VERSION: &str = "0.7.7";
-const KILL_AFTER: &str = "2s";
+use crossbeam_channel::{unbounded, Sender};
+use rayon::prelude::*;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
+const VERSION: &str = "0.8.6";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TypeFlag {
@@ -30,6 +40,13 @@ enum SortOrder {
     Desc,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ColorWhen {
+    Auto,
+    Always,
+    Never,
+}
+
 #[derive(Clone, Debug)]
 struct NamePattern {
     type_flag: Option<TypeFlag>,
@@ -44,7 +61,7 @@ enum SearchDirMode {
 
 #[derive(Clone, Debug)]
 struct Options {
-    timeout_dur: String,
+    timeout_dur: Duration,
     force_pattern_mode: bool,
     long_format: bool,
     long_extended: bool,
@@ -56,13 +73,23 @@ struct Options {
     follow_links: bool,
     respect_ignore: bool,
     visible_only: bool,
-    threads_override: String,
+    threads_override: usize,
     cache_output: bool,
     absolute_paths: bool,
     force_dir: bool,
     force_file: bool,
     force_full: bool,
+    classify: bool,
+    color_when: ColorWhen,
+    hyperlinks: bool,
     positional: Vec<String>,
+}
+
+struct SearchResult {
+    path: String,
+    is_dir: bool,
+    is_symlink: bool,
+    metadata: Option<fs::Metadata>,
 }
 
 #[derive(Clone, Debug)]
@@ -75,14 +102,19 @@ struct DirStats {
 #[derive(Default)]
 struct DirStatsCache {
     map: HashMap<String, DirStats>,
-    have_dirsize: bool,
-    dirsize_threads: String,
+}
+
+struct RawCacheState {
+    dirs: BufWriter<File>,
+    files: BufWriter<File>,
+    seen_dirs: HashSet<String>,
+    seen_files: HashSet<String>,
 }
 
 #[derive(Clone)]
 struct ColorSpec {
     by_key: HashMap<String, String>,
-    globs: Vec<(String, String)>,
+    globs: Vec<(Regex, String)>,
     color_prefix_dir: String,
     color_dir: String,
     color_link: String,
@@ -90,17 +122,19 @@ struct ColorSpec {
 }
 
 fn usage() -> String {
-    let txt = r#"A parallel recursive file searcher
+    let txt = r#"A parallel recursive file searcher (unearth)
 
 Usage:
-  f <filename/dirname> [<search_dir>]
-  f (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
+  unearth <filename/dirname> [<search_dir>]
+  unearth (--full|-F) <pattern1>  [<pattern2> <pattern3>...]
                        [--dir|-d] [--file|-f] [--regex|-r] [--bypass|-b]
+                       [--classify|-C]
                        [--absolute-paths|-A]
                        [--timeout N] [--sort date|size|name asc|desc]
                        [--no-recurse|-R] [--follow-links]
-                       [--ignore] [--visible-only] [--threads N] [--cache-raw]
-  f (--version|-V)
+                       [--ignore] [--hidden|-H] [--threads N] [--cache-raw]
+                       [--color=auto|always|never] [--hyperlink]
+  unearth (--version|-V)
 
 Arguments:
    <filename/dirname>:
@@ -109,27 +143,27 @@ Arguments:
 
    SEARCH MATRIX:
 
-   Goal           | Shorthand  | Wildcard Format | Regex Format
-   ---------------|------------|-----------------|------------------
-   Contains (All) | f abc      | f "*abc*"       | f -r "abc"
-   Contains (File)| f abc -f   | f "*abc*" -f    | f -r "abc" -f
-   Contains (Dir) | f abc -d   | f "*abc*" -d    | f -r "abc" -d
-   Exact (All)    | -          | -               | f -r "^abc$"
-   Exact (File)   | -          | -               | f -r "^abc$" -f
-   Exact (Dir)    | f /abc/    | -               | f -r "^abc$" -d
-   Starts (All)   | f /abc     | f "abc*"        | f -r "^abc"
-   Starts (File)  | f /abc -f  | f "abc*" -f     | f -r "^abc" -f
-   Starts (Dir)   | f /abc -d  | f "abc*" -d     | f -r "^abc" -d
-   Ends (All)     | -          | f "*abc"        | f -r "abc$"
-   Ends (File)    | -          | f "*abc" -f     | f -r "abc$" -f
-   Ends (Dir)     | f abc/     | f "*abc" -d     | f -r "abc$" -d
+   Goal           | Shorthand        | Wildcard Format        | Regex Format
+   ---------------|------------------|------------------------|-------------------
+   Contains (All) | unearth abc      | unearth "*abc*"        | unearth -r "abc"
+   Contains (File)| unearth abc -f   | unearth "*abc*" -f     | unearth -r "abc" -f
+   Contains (Dir) | unearth abc -d   | unearth "*abc*" -d     | unearth -r "abc" -d
+   Exact (All)    | -                | -                      | unearth -r "^abc$"
+   Exact (File)   | -                | -                      | unearth -r "^abc$" -f
+   Exact (Dir)    | unearth /abc/    | -                      | unearth -r "^abc$" -d
+   Starts (All)   | unearth /abc     | unearth "abc*"         | unearth -r "^abc"
+   Starts (File)  | unearth /abc -f  | unearth "abc*" -f      | unearth -r "^abc" -f
+   Starts (Dir)   | unearth /abc -d  | unearth "abc*" -d      | unearth -r "^abc" -d
+   Ends (All)     | -                | unearth "*abc"         | unearth -r "abc$"
+   Ends (File)    | -                | unearth "*abc" -f      | unearth -r "abc$" -f
+   Ends (Dir)     | unearth abc/     | unearth "*abc" -d      | unearth -r "abc$" -d
 
    <search_dir>:
       Location to search. Defaults to '.' (the current directory).
       Behavior follows this priority:
-      1. Local/Absolute Path: If the path exists on disk (e.g., '.', '/', or
-         a specific path), the search is limited to that directory and will
-         not fallback to a global search.
+      1. Local/Absolute Path: If the path exists on disk (e.g., '.', '/',
+         or a specific path), the search is limited to that directory and
+         will not fallback to a global search.
       2. Global Pattern Match: If the path does not exist, the script
          searches the ENTIRE disk for all directories matching the pattern
          (see matrix below) and searches inside them.
@@ -137,98 +171,49 @@ Arguments:
    SEARCH DIR MATRIX:
 
    Goal           | Shorthand | Wildcard Format | Regex Format
-   ---------------|-----------|-----------------|------------------
+   ---------------|-----------|-----------------|----------------
    Contains       | abc       | "*abc*"         | -r "abc"
    Exact          | /abc/     | -               | -r "^abc$"
    Starts         | /abc      | "abc*"          | -r "^abc"
    Ends           | abc/      | "*abc"          | -r "abc$"
 
-   The --full flag matches against the full absolute path instead of just the basename.
-   It supports multiple patterns (implicit AND) and prunes redundant child results.
+   Note: If the 1st check (Literal Path) fails, the script performs a global
+   directory match pass before searching within matched directories.
 
-   Example: f --full "src" "main"   # Matches BOTH (hides children)
-   Example: f --full "test"         # Returns /path/to/test, but hides /path/to/test/file
+   The --full flag matches against the full absolute path instead of just
+   the basename.
+   It supports multiple patterns (implicit AND) and prunes redundant
+   child results.
+
+   Example: unearth --full "src" "main"   # Matches BOTH (hides children)
+   Example: unearth --full "test"         # Returns /path/to/test, but hides
+   /path/to/test/file
 
 Notes:
   - Use quotes around patterns containing $ or * to prevent shell expansion.
   - Regex mode is only enabled with --regex/-r.
   - Plain patterns are contains. For exact matches use regex anchors
     (e.g., --regex "^word$"), or /word/ for exact-directory shorthand.
-
-Options:
-  --dir, -d
-      Limit results to directories.
-  --file, -f
-      Limit results to files.
-  --counts
-      Show a summary of matches by parent folder (folder path + count), instead
-      of listing every matching file. If a directory itself matches, it counts
-      as 1 match for its parent folder. Note: --long does not change --counts
-      output.
-      Renamed from --audit (which is no longer accepted).
-  --full, -F
-      Match against the full absolute path instead of just the basename.
-  --absolute-paths, -A
-      Print absolute paths in output (display only). Does not change matching
-      behavior.
-  --regex, -r
-      Treat filename/dirname and search_dir patterns as regular expressions.
-  --long, -l
-      Show the date and time of last modification and size
-      (B, KiB, MiB, GiB, TiB) at the start of each line.
-  -L, --long-true-dirsize
-      Extended long output for directories:
-      YYYY-MM-DD HH:MM:SS REALDIRSIZE FILECOUNT PATH
-      Symlinked directories are not traversed (shown as link size, count 0).
-  --sort FIELD ORDER
-      Sort listed results by metadata. Supported:
-      --sort date asc|desc, --sort size asc|desc, --sort name asc|desc
-      For directories, size sort uses real allocated directory size.
-      With --no-recurse/-R, size sort uses direct entry size for speed.
-      Note: --counts output is always sorted by count/folder and ignores --sort.
-  --no-recurse, -R
-      Search only the immediate entries in each search root (no recursion).
-  --follow-links
-      Follow symlinked directories while searching.
-  --ignore
-      Respect ignore rules (.gitignore/.ignore/.fdignore). By default, f
-      bypasses ignore rules.
-  --visible-only
-      Exclude hidden files/directories (dotfiles). By default, f includes
-      hidden entries.
-  --threads N
-      Set worker thread count for fd and directory size calculations.
-      Must be a positive integer. Default: 8.
-  --cache-raw
-      Save matched directories to:
-      /tmp/fzf-history-$USER/universal-last-dirs-<fish pid>
-      and files to:
-      /tmp/fzf-history-$USER/universal-last-files-<fish pid>
-      For every match, also save its parent directory to the dirs file.
-      Renamed from --cache (which is no longer accepted).
-  --timeout N
-      Per-invocation timeout for each fd call. Default: 6s
-      Examples: --timeout 10, --timeout 10s, --timeout 2m
-  --bypass, -b
-      Force treating the search_dir as a pattern, even if it exists as a directory.
-  --version, -V
-      Show version and exit.
 "#;
     txt.to_string()
 }
 
-fn normalize_timeout(t: &str) -> String {
-    let is_number = Regex::new(r"^[0-9]+([.][0-9]+)?$").unwrap();
-    if is_number.is_match(t) {
-        format!("{}s", t)
+fn parse_duration(t: &str) -> Result<Duration, String> {
+    let re = Regex::new(r"^(\d+)([sm])?$").unwrap();
+    if let Some(caps) = re.captures(t) {
+        let n = caps[1].parse::<u64>().map_err(|e| e.to_string())?;
+        match caps.get(2).map(|m| m.as_str()) {
+            Some("m") => Ok(Duration::from_secs(n * 60)),
+            _ => Ok(Duration::from_secs(n)),
+        }
     } else {
-        t.to_string()
+        Err(format!("Invalid timeout format: {}", t))
     }
 }
 
 fn parse_args() -> Result<Options, String> {
     let mut opts = Options {
-        timeout_dur: "6s".to_string(),
+        timeout_dur: Duration::from_secs(6),
         force_pattern_mode: false,
         long_format: false,
         long_extended: false,
@@ -239,13 +224,16 @@ fn parse_args() -> Result<Options, String> {
         no_recurse: false,
         follow_links: false,
         respect_ignore: false,
-        visible_only: false,
-        threads_override: "8".to_string(),
+        visible_only: true,
+        threads_override: 8,
         cache_output: false,
         absolute_paths: false,
         force_dir: false,
         force_file: false,
         force_full: false,
+        classify: false,
+        color_when: ColorWhen::Auto,
+        hyperlinks: false,
         positional: Vec::new(),
     };
 
@@ -254,84 +242,157 @@ fn parse_args() -> Result<Options, String> {
 
     while i < args.len() {
         let arg = &args[i];
+
+        if arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 2 {
+            let mut all_known = true;
+            for ch in arg[1..].chars() {
+                let handled = match ch {
+                    'd' => {
+                        opts.force_dir = true;
+                        true
+                    }
+                    'f' => {
+                        opts.force_file = true;
+                        true
+                    }
+                    'F' => {
+                        opts.force_full = true;
+                        true
+                    }
+                    'C' => {
+                        opts.classify = true;
+                        true
+                    }
+                    'A' => {
+                        opts.absolute_paths = true;
+                        true
+                    }
+                    'r' => {
+                        opts.regex_mode = true;
+                        true
+                    }
+                    'R' => {
+                        opts.no_recurse = true;
+                        true
+                    }
+                    'H' => {
+                        opts.visible_only = false;
+                        true
+                    }
+                    'b' => {
+                        opts.force_pattern_mode = true;
+                        true
+                    }
+                    'l' => {
+                        opts.long_format = true;
+                        true
+                    }
+                    'L' => {
+                        opts.long_format = true;
+                        opts.long_extended = true;
+                        true
+                    }
+                    'h' => {
+                        print!("{}", usage());
+                        std::process::exit(0);
+                    }
+                    'V' => {
+                        println!("unearth {}", VERSION);
+                        std::process::exit(0);
+                    }
+                    _ => false,
+                };
+                if !handled {
+                    all_known = false;
+                    break;
+                }
+            }
+
+            if all_known {
+                i += 1;
+                continue;
+            }
+        }
+
         match arg.as_str() {
             "--timeout" => {
                 i += 1;
-                if i >= args.len() {
-                    return Err("Error: --timeout requires a value.".to_string());
+                if i < args.len() {
+                    opts.timeout_dur = parse_duration(&args[i])?;
                 }
-                opts.timeout_dur = normalize_timeout(&args[i]);
             }
             _ if arg.starts_with("--timeout=") => {
-                opts.timeout_dur = normalize_timeout(arg.trim_start_matches("--timeout="));
+                opts.timeout_dur = parse_duration(arg.trim_start_matches("--timeout="))?;
             }
             "--threads" => {
                 i += 1;
-                if i >= args.len() {
-                    return Err("Error: --threads requires a value.".to_string());
+                if i < args.len() {
+                    opts.threads_override = args[i]
+                        .parse::<usize>()
+                        .map_err(|_| "Invalid threads count")?;
+                    if opts.threads_override == 0 {
+                        return Err("--threads requires a positive integer".to_string());
+                    }
                 }
-                validate_threads(&args[i])?;
-                opts.threads_override = args[i].clone();
             }
             _ if arg.starts_with("--threads=") => {
-                let v = arg.trim_start_matches("--threads=");
-                validate_threads(v)?;
-                opts.threads_override = v.to_string();
+                opts.threads_override = arg
+                    .trim_start_matches("--threads=")
+                    .parse::<usize>()
+                    .map_err(|_| "Invalid threads count")?;
+                if opts.threads_override == 0 {
+                    return Err("--threads requires a positive integer".to_string());
+                }
             }
+            "--color" => {
+                i += 1;
+                if i < args.len() {
+                    opts.color_when = parse_color_when(&args[i])?;
+                }
+            }
+            _ if arg.starts_with("--color=") => {
+                opts.color_when = parse_color_when(arg.trim_start_matches("--color="))?;
+            }
+            "--hyperlink" => opts.hyperlinks = true,
             "--dir" | "-d" => opts.force_dir = true,
             "--file" | "-f" => opts.force_file = true,
             "--full" | "-F" => opts.force_full = true,
+            "--classify" | "-C" => opts.classify = true,
             "--absolute-paths" | "-A" => opts.absolute_paths = true,
             "--regex" | "-r" => opts.regex_mode = true,
             "--sort" => {
-                if i + 2 >= args.len() {
-                    return Err(
-                        "Error: --sort requires FIELD and ORDER (e.g., --sort date desc)."
-                            .to_string(),
-                    );
+                if i + 2 < args.len() {
+                    let field = args[i + 1].as_str();
+                    let order = args[i + 2].as_str();
+                    opts.sort_field = match field {
+                        "date" => Some(SortField::Date),
+                        "size" => Some(SortField::Size),
+                        "name" => Some(SortField::Name),
+                        _ => return Err(format!("Unsupported sort field '{}'", field)),
+                    };
+                    opts.sort_order = match order {
+                        "asc" => Some(SortOrder::Asc),
+                        "desc" => Some(SortOrder::Desc),
+                        _ => return Err(format!("Unsupported sort order '{}'", order)),
+                    };
+                    i += 2;
                 }
-                let field = args[i + 1].as_str();
-                let order = args[i + 2].as_str();
-                opts.sort_field = match field {
-                    "date" => Some(SortField::Date),
-                    "size" => Some(SortField::Size),
-                    "name" => Some(SortField::Name),
-                    _ => {
-                        return Err(format!(
-                            "Error: unsupported sort field '{}'. Supported: date, size, name",
-                            field
-                        ))
-                    }
-                };
-                opts.sort_order = match order {
-                    "asc" => Some(SortOrder::Asc),
-                    "desc" => Some(SortOrder::Desc),
-                    _ => {
-                        return Err(format!(
-                            "Error: unsupported sort order '{}'. Supported: asc, desc",
-                            order
-                        ))
-                    }
-                };
-                i += 2;
             }
             "--no-recurse" | "-R" => opts.no_recurse = true,
             "--follow-links" => opts.follow_links = true,
             "--ignore" => opts.respect_ignore = true,
-            "--visible-only" => opts.visible_only = true,
+            "--hidden" | "-H" => opts.visible_only = false,
             "--cache-raw" => opts.cache_output = true,
-            "--cache" => return Err("f: --cache was renamed to --cache-raw".to_string()),
+            "--cache" => return Err("--cache was renamed to --cache-raw".to_string()),
             "--bypass" | "-b" => opts.force_pattern_mode = true,
             "--long" | "-l" => opts.long_format = true,
             "-L" | "--long-true-dirsize" => {
                 opts.long_format = true;
                 opts.long_extended = true;
             }
-            "--info" | "-i" => return Err("f: --info/-i was renamed to --long/-l".to_string()),
-            "--counts" => opts.counts = true,
-            "--audit" => return Err("f: --audit was renamed to --counts".to_string()),
+            "--info" | "-i" => return Err("--info/-i was renamed to --long/-l".to_string()),
             "--version" | "-V" => {
-                println!("f {}", VERSION);
+                println!("unearth {}", VERSION);
                 std::process::exit(0);
             }
             "-h" | "--help" => {
@@ -352,18 +413,34 @@ fn parse_args() -> Result<Options, String> {
     if opts.positional.is_empty() {
         return Err(usage());
     }
-
     Ok(opts)
 }
 
-fn validate_threads(v: &str) -> Result<(), String> {
-    if v.is_empty() || !v.chars().all(|c| c.is_ascii_digit()) {
-        return Err("Error: --threads requires a positive integer.".to_string());
+fn parse_color_when(v: &str) -> Result<ColorWhen, String> {
+    match v {
+        "auto" => Ok(ColorWhen::Auto),
+        "always" => Ok(ColorWhen::Always),
+        "never" => Ok(ColorWhen::Never),
+        _ => Err(format!("Unsupported --color value '{}'", v)),
     }
-    if v.starts_with('0') {
-        return Err("Error: --threads requires a positive integer.".to_string());
+}
+
+fn style_enabled(opts: &Options, stdout_is_tty: bool) -> bool {
+    match opts.color_when {
+        ColorWhen::Auto => stdout_is_tty,
+        ColorWhen::Always => true,
+        ColorWhen::Never => false,
     }
-    Ok(())
+}
+
+fn can_stream_direct(opts: &Options, use_style: bool) -> bool {
+    !use_style
+        && !opts.classify
+        && !opts.force_full
+        && !opts.counts
+        && opts.sort_field.is_none()
+        && !opts.long_format
+        && !opts.absolute_paths
 }
 
 fn escape_regex_keep_star(s: &str) -> String {
@@ -386,18 +463,8 @@ fn to_regex_fragment(s: &str) -> String {
 
 fn wildcard_to_regex(pat: &str) -> String {
     let lead_star = pat.starts_with('*');
-    let trail_star = {
-        if !pat.ends_with('*') {
-            false
-        } else {
-            let bytes = pat.as_bytes();
-            if bytes.len() < 2 {
-                true
-            } else {
-                bytes[bytes.len() - 2] != b'\\'
-            }
-        }
-    };
+    let trail_star =
+        pat.ends_with('*') && (pat.len() < 2 || pat.as_bytes()[pat.len() - 2] != b'\\');
     let mut rx = to_regex_fragment(pat);
     if !lead_star {
         rx = format!("^{}", rx);
@@ -418,7 +485,6 @@ fn parse_name_pattern(raw: &str, regex_mode: bool) -> NamePattern {
         type_flag: None,
         regex: String::new(),
     };
-
     if is_wrapped_quote(raw) {
         let mut inner = raw[1..raw.len() - 1].to_string();
         inner = inner.trim_start_matches('/').to_string();
@@ -432,37 +498,31 @@ fn parse_name_pattern(raw: &str, regex_mode: bool) -> NamePattern {
         };
         return out;
     }
-
     if regex_mode {
         out.regex = raw.to_string();
         return out;
     }
-
     if raw.starts_with('/') && raw.ends_with('/') {
         let frag = raw[1..raw.len() - 1].to_string();
         out.type_flag = Some(TypeFlag::Dir);
         out.regex = format!("^{}$", to_regex_fragment(&frag));
         return out;
     }
-
     if raw.starts_with('/') {
         let frag = raw.trim_start_matches('/');
         out.regex = format!("^{}", to_regex_fragment(frag));
         return out;
     }
-
     if raw != "/" && raw.ends_with('/') {
         out.type_flag = Some(TypeFlag::Dir);
         let no_slash = raw.trim_end_matches('/');
         out.regex = format!("{}$", to_regex_fragment(no_slash));
         return out;
     }
-
     if raw.contains('*') {
         out.regex = wildcard_to_regex(raw);
         return out;
     }
-
     out.regex = to_regex_fragment(raw);
     out
 }
@@ -484,12 +544,10 @@ fn parse_search_dir(raw: &str, regex_mode: bool, force_pattern_mode: bool) -> Se
             return SearchDirMode::Path(p);
         }
     }
-
     let mut normalized = raw.to_string();
     if normalized != "/" {
         normalized = normalized.trim_end_matches('/').to_string();
     }
-
     if is_wrapped_quote(raw) {
         let inner = raw[1..raw.len() - 1].to_string();
         if !force_pattern_mode {
@@ -508,169 +566,366 @@ fn parse_search_dir(raw: &str, regex_mode: bool, force_pattern_mode: bool) -> Se
         };
         return SearchDirMode::Pattern(rx);
     }
-
     if regex_mode {
         return SearchDirMode::Pattern(normalized);
     }
-
     if raw.starts_with('/') && raw.ends_with('/') {
-        let frag = raw[1..raw.len() - 1].to_string();
-        return SearchDirMode::Pattern(format!("^{}$", to_regex_fragment(&frag)));
+        return SearchDirMode::Pattern(format!("^{}$", to_regex_fragment(&raw[1..raw.len() - 1])));
     }
     if raw.starts_with("./") && raw.ends_with('/') {
-        let frag = raw[2..raw.len() - 1].to_string();
-        return SearchDirMode::Pattern(format!("^{}$", to_regex_fragment(&frag)));
+        return SearchDirMode::Pattern(format!("^{}$", to_regex_fragment(&raw[2..raw.len() - 1])));
     }
-
     if raw.starts_with('/') {
-        let frag = raw.trim_start_matches('/');
-        return SearchDirMode::Pattern(format!("^{}", to_regex_fragment(frag)));
+        return SearchDirMode::Pattern(format!(
+            "^{}",
+            to_regex_fragment(raw.trim_start_matches('/'))
+        ));
     }
     if raw.starts_with("./") {
-        let frag = raw.trim_start_matches("./");
-        return SearchDirMode::Pattern(format!("^{}", to_regex_fragment(frag)));
+        return SearchDirMode::Pattern(format!(
+            "^{}",
+            to_regex_fragment(raw.trim_start_matches("./"))
+        ));
     }
-
     if raw != "/" && raw.ends_with('/') {
-        let frag = raw.trim_end_matches('/');
-        return SearchDirMode::Pattern(format!("{}$", to_regex_fragment(frag)));
+        return SearchDirMode::Pattern(format!(
+            "{}$",
+            to_regex_fragment(raw.trim_end_matches('/'))
+        ));
     }
-
     if normalized.contains('*') {
         return SearchDirMode::Pattern(wildcard_to_regex(&normalized));
     }
-
     SearchDirMode::Pattern(to_regex_fragment(&normalized))
 }
 
-fn run_fd(
-    root: &str,
-    type_flag: Option<TypeFlag>,
-    rx: &str,
-    full_path: bool,
-    opts: &Options,
-) -> Result<Vec<String>, String> {
-    let mut cmd = Command::new("timeout");
-    cmd.arg("--preserve-status")
-        .arg(format!("--kill-after={}", KILL_AFTER))
-        .arg(&opts.timeout_dur)
-        .arg("fd")
-        .arg("--color=never")
-        .arg("-i")
-        .arg("--exclude")
-        .arg("proc")
-        .arg("--exclude")
-        .arg("sys")
-        .arg("--exclude")
-        .arg("dev")
-        .arg("--exclude")
-        .arg("run");
+struct PathInfo {
+    path: PathBuf,
+    is_dir: bool,
+}
 
-    if !opts.respect_ignore {
-        cmd.arg("--no-ignore");
-    }
-    if !opts.threads_override.is_empty() {
-        cmd.arg("--threads").arg(&opts.threads_override);
-    }
-    if !opts.visible_only {
-        cmd.arg("--hidden");
-    }
-    if opts.follow_links {
-        cmd.arg("--follow");
-    }
-    if opts.no_recurse {
-        cmd.arg("--max-depth").arg("1");
-    }
+#[derive(Default)]
+struct SimpleIgnoreRules {
+    names: HashSet<String>,
+    dir_names: HashSet<String>,
+}
 
-    if let Some(tf) = type_flag {
-        cmd.arg("--type");
-        match tf {
-            TypeFlag::File => cmd.arg("f"),
-            TypeFlag::Dir => cmd.arg("d"),
+fn load_simple_ignore_rules(dir: &Path) -> SimpleIgnoreRules {
+    let mut rules = SimpleIgnoreRules::default();
+    for ignore_name in [".gitignore", ".ignore", ".fdignore"] {
+        let path = dir.join(ignore_name);
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
         };
+        for raw in content.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
+                continue;
+            }
+            let mut token = line;
+            let is_dir_only = token.ends_with('/');
+            if is_dir_only {
+                token = token.trim_end_matches('/');
+            }
+            if token.is_empty() {
+                continue;
+            }
+            if token.contains('/')
+                || token.contains('*')
+                || token.contains('?')
+                || token.contains('[')
+            {
+                continue;
+            }
+            if is_dir_only {
+                rules.dir_names.insert(token.to_string());
+            } else {
+                rules.names.insert(token.to_string());
+            }
+        }
     }
-    if full_path {
-        cmd.arg("--full-path");
-    }
-
-    cmd.arg("--regex").arg(rx).arg(root);
-    let out = cmd
-        .output()
-        .map_err(|e| format!("failed to run fd: {}", e))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).to_string());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|s| s.to_string())
-        .collect())
+    rules
 }
 
-fn find_dirs_anywhere_nul(sd_dir_regex: &str, opts: &Options) -> Result<Vec<String>, String> {
-    let mut cmd = Command::new("timeout");
-    cmd.arg("--preserve-status")
-        .arg(format!("--kill-after={}", KILL_AFTER))
-        .arg(&opts.timeout_dur)
-        .arg("fd")
-        .arg("-i")
-        .arg("--exclude")
-        .arg("proc")
-        .arg("--exclude")
-        .arg("sys")
-        .arg("--exclude")
-        .arg("dev")
-        .arg("--exclude")
-        .arg("run");
-    if !opts.respect_ignore {
-        cmd.arg("--no-ignore");
-    }
-    if !opts.threads_override.is_empty() {
-        cmd.arg("--threads").arg(&opts.threads_override);
-    }
-    if !opts.visible_only {
-        cmd.arg("--hidden");
-    }
-    if opts.follow_links {
-        cmd.arg("--follow");
-    }
-
-    cmd.arg("--type")
-        .arg("d")
-        .arg("--regex")
-        .arg(sd_dir_regex)
-        .arg("/")
-        .arg("-0");
-
-    let out = cmd
-        .output()
-        .map_err(|e| format!("failed to run fd: {}", e))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).to_string());
-    }
-    let mut dirs = Vec::new();
-    for chunk in out.stdout.split(|b| *b == b'\0') {
-        if chunk.is_empty() {
-            continue;
-        }
-        dirs.push(String::from_utf8_lossy(chunk).to_string());
-    }
-    Ok(dirs)
+fn is_simple_ignored_name(name: &str, is_dir: bool, rules: &SimpleIgnoreRules) -> bool {
+    rules.names.contains(name) || (is_dir && rules.dir_names.contains(name))
 }
 
-fn prune_children(mut lines: Vec<String>) -> Vec<String> {
-    lines.sort();
-    let mut out = Vec::with_capacity(lines.len());
-    let mut last = String::new();
-    for line in lines {
-        let prefix = last.trim_end_matches('/');
-        if !last.is_empty() && line.starts_with(&format!("{}/", prefix)) {
+fn walk_fast(
+    dir: PathBuf,
+    re: &Regex,
+    is_catch_all: bool,
+    tx: &Sender<Vec<PathInfo>>,
+    visible_only: bool,
+    respect_ignore: bool,
+    no_recurse: bool,
+    follow_links: bool,
+    type_flag: Option<TypeFlag>,
+    full_path_match: bool,
+    timeout_flag: &Arc<AtomicBool>,
+) {
+    if timeout_flag.load(Ordering::Relaxed) {
+        return;
+    }
+    let Ok(read_dir) = fs::read_dir(&dir) else {
+        return;
+    };
+    let ignore_rules = if respect_ignore {
+        Some(load_simple_ignore_rules(&dir))
+    } else {
+        None
+    };
+    let mut subdirs = Vec::new();
+    let mut local_buf = Vec::with_capacity(512);
+    for entry_res in read_dir {
+        let Ok(entry) = entry_res else { continue };
+        let name = entry.file_name();
+        let name_bytes = name.as_bytes();
+        if visible_only && name_bytes.starts_with(b".") {
             continue;
         }
-        last = line.clone();
-        out.push(line);
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        let is_symlink = file_type.is_symlink();
+        let mut is_dir = file_type.is_dir();
+        if is_symlink && follow_links {
+            if let Ok(meta) = fs::metadata(&path) {
+                if meta.is_dir() {
+                    is_dir = true;
+                }
+            }
+        }
+        let name_lossy = name.to_string_lossy();
+        if let Some(rules) = &ignore_rules {
+            if is_simple_ignored_name(&name_lossy, is_dir, rules) {
+                continue;
+            }
+        }
+        let skip_type = match type_flag {
+            Some(TypeFlag::File) => is_dir,
+            Some(TypeFlag::Dir) => !is_dir,
+            None => false,
+        };
+        if !skip_type {
+            let is_match = if is_catch_all {
+                true
+            } else {
+                let match_target = if full_path_match {
+                    path.to_string_lossy()
+                } else {
+                    name.to_string_lossy()
+                };
+                re.is_match(&match_target)
+            };
+            if is_match {
+                local_buf.push(PathInfo {
+                    path: path.clone(),
+                    is_dir,
+                });
+                if local_buf.len() >= 512 {
+                    if tx.send(std::mem::take(&mut local_buf)).is_err() {
+                        return;
+                    }
+                    local_buf.reserve(512);
+                }
+            }
+        }
+        if is_dir && !no_recurse {
+            if dir.as_os_str().as_bytes() == b"/" {
+                if name_bytes == b"proc"
+                    || name_bytes == b"sys"
+                    || name_bytes == b"dev"
+                    || name_bytes == b"run"
+                {
+                    continue;
+                }
+            }
+            if is_symlink && !follow_links {
+                continue;
+            }
+            subdirs.push(path);
+        }
     }
-    out
+    if !local_buf.is_empty() {
+        if tx.send(local_buf).is_err() {
+            return;
+        }
+    }
+    subdirs
+        .into_par_iter()
+        .for_each_with(tx.clone(), |tx_clone, subdir| {
+            walk_fast(
+                subdir,
+                re,
+                is_catch_all,
+                tx_clone,
+                visible_only,
+                respect_ignore,
+                no_recurse,
+                follow_links,
+                type_flag,
+                full_path_match,
+                timeout_flag,
+            );
+        });
+}
+
+fn walk_rayon_worker(
+    dir: PathBuf,
+    re: &Regex,
+    is_catch_all: bool,
+    tx: &Sender<Vec<SearchResult>>,
+    opts: &Options,
+    type_flag: Option<TypeFlag>,
+    full_path_match: bool,
+    needs_metadata: bool,
+    timeout_flag: &Arc<AtomicBool>,
+) {
+    if timeout_flag.load(Ordering::Relaxed) {
+        return;
+    }
+    let Ok(read_dir) = fs::read_dir(&dir) else {
+        return;
+    };
+    let ignore_rules = if opts.respect_ignore {
+        Some(load_simple_ignore_rules(&dir))
+    } else {
+        None
+    };
+    let mut subdirs = Vec::new();
+    let mut local_buf = Vec::with_capacity(256);
+    for entry_res in read_dir {
+        let Ok(entry) = entry_res else { continue };
+        let name = entry.file_name();
+        let name_lossy = name.to_string_lossy();
+        if opts.visible_only && name_lossy.starts_with('.') {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        let is_symlink = file_type.is_symlink();
+        let mut is_dir = file_type.is_dir();
+        if is_symlink && opts.follow_links {
+            if let Ok(meta) = fs::metadata(&path) {
+                if meta.is_dir() {
+                    is_dir = true;
+                }
+            }
+        }
+        if let Some(rules) = &ignore_rules {
+            if is_simple_ignored_name(&name_lossy, is_dir, rules) {
+                continue;
+            }
+        }
+        let skip_type = match type_flag {
+            Some(TypeFlag::File) => is_dir,
+            Some(TypeFlag::Dir) => !is_dir,
+            None => false,
+        };
+        if !skip_type {
+            let is_match = if is_catch_all {
+                true
+            } else {
+                let match_target = if full_path_match {
+                    path.to_string_lossy()
+                } else {
+                    name_lossy.clone()
+                };
+                re.is_match(&match_target)
+            };
+            if is_match {
+                let mut p_str = path
+                    .into_os_string()
+                    .into_string()
+                    .unwrap_or_else(|os| os.to_string_lossy().into_owned());
+                if is_dir && !p_str.ends_with('/') {
+                    p_str.push('/');
+                }
+                local_buf.push(SearchResult {
+                    path: p_str,
+                    is_dir,
+                    is_symlink,
+                    metadata: if needs_metadata {
+                        entry.metadata().ok()
+                    } else {
+                        None
+                    },
+                });
+
+                if local_buf.len() >= 256 {
+                    if tx.send(std::mem::take(&mut local_buf)).is_err() {
+                        return;
+                    }
+                    local_buf.reserve(256);
+                }
+            }
+        }
+        if is_dir && !opts.no_recurse {
+            if dir.to_str() == Some("/")
+                && (name_lossy == "proc"
+                    || name_lossy == "sys"
+                    || name_lossy == "dev"
+                    || name_lossy == "run")
+            {
+                continue;
+            }
+            if is_symlink && !opts.follow_links {
+                continue;
+            }
+            subdirs.push(entry.path());
+        }
+    }
+    if !local_buf.is_empty() {
+        if tx.send(local_buf).is_err() {
+            return;
+        }
+    }
+    subdirs
+        .into_par_iter()
+        .for_each_with(tx.clone(), |tx_clone, subdir| {
+            walk_rayon_worker(
+                subdir,
+                re,
+                is_catch_all,
+                tx_clone,
+                opts,
+                type_flag,
+                full_path_match,
+                needs_metadata,
+                timeout_flag,
+            );
+        });
+}
+
+fn get_dir_stats_native(path: &str) -> (u64, u64) {
+    let bytes = Arc::new(AtomicU64::new(0));
+    let files = Arc::new(AtomicU64::new(0));
+    let tx_bytes = Arc::clone(&bytes);
+    let tx_files = Arc::clone(&files);
+    fn walk(p: PathBuf, b: &Arc<AtomicU64>, f: &Arc<AtomicU64>) {
+        let Ok(read_dir) = fs::read_dir(p) else {
+            return;
+        };
+        let mut dirs = Vec::new();
+        for entry in read_dir.filter_map(|e| e.ok()) {
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_file() {
+                if let Ok(m) = entry.metadata() {
+                    b.fetch_add(m.len(), Ordering::Relaxed);
+                }
+                f.fetch_add(1, Ordering::Relaxed);
+            } else if ft.is_dir() {
+                dirs.push(entry.path());
+            }
+        }
+        dirs.into_par_iter().for_each(|d| walk(d, b, f));
+    }
+    walk(PathBuf::from(path), &tx_bytes, &tx_files);
+    (bytes.load(Ordering::Relaxed), files.load(Ordering::Relaxed))
 }
 
 fn format_size_iec(bytes: u64) -> String {
@@ -692,190 +947,109 @@ fn format_size_iec(bytes: u64) -> String {
     }
 }
 
-fn metadata_datetime_and_size(path: &str) -> Option<(String, u64)> {
-    let meta = fs::metadata(path).ok()?;
-    let modified = meta.modified().ok()?;
-    let dt: DateTime<Local> = modified.into();
-    let dt_str = dt.format("%Y-%m-%d %H:%M:%S").to_string();
-    Some((dt_str, meta.len()))
-}
-
-fn is_symlink(path: &str) -> bool {
-    fs::symlink_metadata(path)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
-}
-
-fn is_dir_follow(path: &str) -> bool {
-    fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
-}
-
-fn du_size_bytes(path: &str) -> u64 {
-    let out = Command::new("du")
-        .arg("-sB1")
-        .arg(path)
-        .output()
-        .ok()
-        .filter(|o| o.status.success());
-    if let Some(out) = out {
-        let txt = String::from_utf8_lossy(&out.stdout);
-        if let Some(first) = txt.split_whitespace().next() {
-            return first.parse::<u64>().unwrap_or(0);
-        }
-    }
-    0
-}
-
-fn find_file_count(path: &str) -> u64 {
-    let out = Command::new("find")
-        .arg(path)
-        .arg("-type")
-        .arg("f")
-        .arg("-print")
-        .output()
-        .ok()
-        .filter(|o| o.status.success());
-    if let Some(out) = out {
-        return String::from_utf8_lossy(&out.stdout).lines().count() as u64;
-    }
-    0
-}
-
-fn get_dirsize_stats(path: &str, cache: &mut DirStatsCache) -> Option<DirStats> {
-    if is_symlink(path) {
-        return None;
-    }
-    if let Some(v) = cache.map.get(path) {
-        return Some(v.clone());
-    }
-    if !cache.have_dirsize {
-        return None;
-    }
-
-    let out = Command::new("dirsize")
-        .arg(path)
-        .arg("--threads")
-        .arg(&cache.dirsize_threads)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
-
-    let txt = String::from_utf8_lossy(&out.stdout);
-    let mut files: Option<u64> = None;
-    let mut bytes: Option<u64> = None;
-    let mut human: Option<String> = None;
-
-    for line in txt.lines() {
-        if let Some(v) = line.strip_prefix("files:") {
-            files = v.trim().parse::<u64>().ok();
-        } else if let Some(v) = line.strip_prefix("bytes:") {
-            bytes = v.trim().parse::<u64>().ok();
-        } else if let Some(v) = line.strip_prefix("human:") {
-            human = Some(v.trim().to_string());
-        }
-    }
-
-    let stats = DirStats {
-        files: files?,
-        bytes: bytes?,
-        human: human?,
-    };
-    cache.map.insert(path.to_string(), stats.clone());
-    Some(stats)
-}
-
-fn sort_results(lines: Vec<String>, opts: &Options, cache: &mut DirStatsCache) -> Vec<String> {
+fn sort_results(
+    mut items: Vec<SearchResult>,
+    opts: &Options,
+    cache: &mut DirStatsCache,
+) -> Vec<SearchResult> {
     let Some(field) = opts.sort_field else {
-        return lines;
+        return items;
     };
     let order = opts.sort_order.unwrap_or(SortOrder::Asc);
-
-    let mut keyed: Vec<(String, String)> = lines
-        .into_iter()
-        .map(|line| {
-            let key = match field {
-                SortField::Date => fs::metadata(&line)
-                    .ok()
+    items.sort_by(|a, b| {
+        let ord = match field {
+            SortField::Date => {
+                let da = a
+                    .metadata
+                    .as_ref()
                     .and_then(|m| m.modified().ok())
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs().to_string())
-                    .unwrap_or_else(|| "0".to_string()),
-                SortField::Size => {
-                    let key_num = if is_dir_follow(&line) {
-                        if opts.long_extended {
-                            if is_symlink(&line) {
-                                fs::symlink_metadata(&line).map(|m| m.len()).unwrap_or(0)
-                            } else if let Some(stats) = get_dirsize_stats(&line, cache) {
-                                stats.bytes
-                            } else {
-                                du_size_bytes(&line)
-                            }
-                        } else if opts.no_recurse {
-                            fs::metadata(&line).map(|m| m.len()).unwrap_or(0)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let db = b
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                da.cmp(&db)
+            }
+            SortField::Size => {
+                let sa = if a.is_dir {
+                    if opts.long_extended {
+                        if a.is_symlink {
+                            a.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
                         } else {
-                            du_size_bytes(&line)
+                            get_dirsize_stats(&a.path, cache)
+                                .map(|s| s.bytes)
+                                .unwrap_or(0)
                         }
+                    } else if opts.no_recurse {
+                        a.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
                     } else {
-                        fs::metadata(&line).map(|m| m.len()).unwrap_or(0)
-                    };
-                    key_num.to_string()
-                }
-                SortField::Name => line
-                    .trim_end_matches('/')
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or("")
-                    .to_string(),
-            };
-            (key, line)
-        })
-        .collect();
-
-    keyed.sort_by(|a, b| match field {
-        SortField::Name => {
-            let ord =
-                a.0.to_lowercase()
-                    .cmp(&b.0.to_lowercase())
-                    .then(a.1.cmp(&b.1));
-            match order {
-                SortOrder::Asc => ord,
-                SortOrder::Desc => ord.reverse(),
+                        get_dirsize_stats(&a.path, cache)
+                            .map(|s| s.bytes)
+                            .unwrap_or(0)
+                    }
+                } else {
+                    a.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+                };
+                let sb = if b.is_dir {
+                    if opts.long_extended {
+                        if b.is_symlink {
+                            b.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+                        } else {
+                            get_dirsize_stats(&b.path, cache)
+                                .map(|s| s.bytes)
+                                .unwrap_or(0)
+                        }
+                    } else if opts.no_recurse {
+                        b.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+                    } else {
+                        get_dirsize_stats(&b.path, cache)
+                            .map(|s| s.bytes)
+                            .unwrap_or(0)
+                    }
+                } else {
+                    b.metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+                };
+                sa.cmp(&sb)
             }
-        }
-        _ => {
-            let an = a.0.parse::<u64>().unwrap_or(0);
-            let bn = b.0.parse::<u64>().unwrap_or(0);
-            let ord = an.cmp(&bn).then(a.1.cmp(&b.1));
-            match order {
-                SortOrder::Asc => ord,
-                SortOrder::Desc => ord.reverse(),
-            }
+            SortField::Name => a.path.to_lowercase().cmp(&b.path.to_lowercase()),
+        };
+        match order {
+            SortOrder::Asc => ord,
+            SortOrder::Desc => ord.reverse(),
         }
     });
-
-    keyed.into_iter().map(|(_, line)| line).collect()
+    items
 }
 
-fn absolute_paths_transform(lines: Vec<String>, opts: &Options) -> Vec<String> {
+fn absolute_paths_transform(mut items: Vec<SearchResult>, opts: &Options) -> Vec<SearchResult> {
     if !opts.absolute_paths {
-        return lines;
+        return items;
     }
     let cwd_abs = env::current_dir()
         .ok()
         .and_then(|p| fs::canonicalize(p).ok())
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let cwd_abs = cwd_abs.to_string_lossy().to_string();
+    let cwd_abs_str = cwd_abs.to_string_lossy().to_string();
+    for item in items.iter_mut() {
+        if !item.path.starts_with('/') {
+            item.path = format!("{}/{}", cwd_abs_str, item.path.trim_start_matches("./"));
+        }
+    }
+    items
+}
 
-    lines
-        .into_iter()
-        .map(|p| {
-            if p.starts_with('/') {
-                p
-            } else {
-                format!("{}/{}", cwd_abs, p.trim_start_matches("./"))
-            }
-        })
-        .collect()
+fn parent_pid() -> Option<u32> {
+    let stat = fs::read_to_string("/proc/self/stat").ok()?;
+    let (_, tail) = stat.rsplit_once(") ")?;
+    let mut fields = tail.split_whitespace();
+    let _state = fields.next()?;
+    let ppid = fields.next()?.parse::<u32>().ok()?;
+    Some(ppid)
 }
 
 fn fish_pid() -> String {
@@ -889,135 +1063,138 @@ fn fish_pid() -> String {
             return v;
         }
     }
-    if let Ok(ppid) = env::var("PPID") {
-        if !ppid.is_empty() && ppid.chars().all(|c| c.is_ascii_digit()) {
-            let out = Command::new("ps")
-                .arg("-p")
-                .arg(&ppid)
-                .arg("-o")
-                .arg("comm=")
-                .output()
-                .ok();
-            if let Some(out) = out {
-                if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "fish" {
-                    return ppid;
-                }
-            }
-        }
+    if let Some(ppid) = parent_pid() {
+        return ppid.to_string();
     }
     std::process::id().to_string()
 }
 
-fn cache_transform(lines: Vec<String>, opts: &Options) -> Vec<String> {
-    if !opts.cache_output {
-        return lines;
-    }
-
-    let user = env::var("USER")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| {
-            let out = Command::new("id").arg("-un").output().ok();
-            out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| "unknown".to_string())
-        });
+fn init_raw_cache_state() -> Option<RawCacheState> {
+    let user = env::var("USER").unwrap_or_else(|_| "unknown".to_string());
     let pid = fish_pid();
     let cache_dir = format!("/tmp/fzf-history-{}", user);
     let dirs_file = format!("{}/universal-last-dirs-{}", cache_dir, pid);
     let files_file = format!("{}/universal-last-files-{}", cache_dir, pid);
+    fs::create_dir_all(&cache_dir).ok()?;
+    let dirs = BufWriter::new(File::create(&dirs_file).ok()?);
+    let files = BufWriter::new(File::create(&files_file).ok()?);
+    Some(RawCacheState {
+        dirs,
+        files,
+        seen_dirs: HashSet::new(),
+        seen_files: HashSet::new(),
+    })
+}
 
-    let _ = fs::create_dir_all(&cache_dir);
-
-    let mut dirs = match File::create(&dirs_file) {
-        Ok(f) => f,
-        Err(_) => return lines,
-    };
-    let mut files = match File::create(&files_file) {
-        Ok(f) => f,
-        Err(_) => return lines,
-    };
-
-    let mut seen_dirs = HashSet::new();
-    let mut seen_files = HashSet::new();
-
-    for path in &lines {
-        if path.ends_with('/') {
-            if seen_dirs.insert(path.clone()) {
-                let _ = writeln!(dirs, "{}", path);
-            }
-        } else if seen_files.insert(path.clone()) {
-            let _ = writeln!(files, "{}", path);
+fn cache_raw_record_path(path: &str, is_dir: bool, state: &mut RawCacheState) {
+    if is_dir {
+        let mut p = path.to_string();
+        if !p.ends_with('/') {
+            p.push('/');
         }
-
-        let mut parent = path.trim_end_matches('/').to_string();
-        if let Some(idx) = parent.rfind('/') {
-            parent = parent[..idx].to_string();
-            if parent.is_empty() {
-                parent = "/".to_string();
-            } else if !parent.ends_with('/') {
-                parent.push('/');
-            }
-        } else {
-            parent = "./".to_string();
+        if state.seen_dirs.insert(p.clone()) {
+            let _ = writeln!(state.dirs, "{}", p);
         }
-
-        if seen_dirs.insert(parent.clone()) {
-            let _ = writeln!(dirs, "{}", parent);
+    } else {
+        if state.seen_files.insert(path.to_string()) {
+            let _ = writeln!(state.files, "{}", path);
         }
     }
+    let mut parent = path.trim_end_matches('/').to_string();
+    if let Some(idx) = parent.rfind('/') {
+        parent = parent[..idx].to_string();
+        if parent.is_empty() {
+            parent = "/".to_string();
+        } else if !parent.ends_with('/') {
+            parent.push('/');
+        }
+    } else {
+        parent = "./".to_string();
+    }
+    if state.seen_dirs.insert(parent.clone()) {
+        let _ = writeln!(state.dirs, "{}", parent);
+    }
+}
 
-    lines
+fn cache_transform(items: &Vec<SearchResult>, opts: &Options) {
+    if !opts.cache_output {
+        return;
+    }
+    let Some(mut state) = init_raw_cache_state() else {
+        return;
+    };
+    for item in items {
+        cache_raw_record_path(&item.path, item.is_dir, &mut state);
+    }
+    let _ = state.dirs.flush();
+    let _ = state.files.flush();
+}
+
+fn get_dirsize_stats(path: &str, cache: &mut DirStatsCache) -> Option<DirStats> {
+    if let Some(v) = cache.map.get(path) {
+        return Some(v.clone());
+    }
+    let (bytes, files) = get_dir_stats_native(path);
+    let stats = DirStats {
+        files,
+        bytes,
+        human: format_size_iec(bytes),
+    };
+    cache.map.insert(path.to_string(), stats.clone());
+    Some(stats)
 }
 
 fn add_info_transform(
-    lines: Vec<String>,
+    items: Vec<SearchResult>,
     opts: &Options,
     cache: &mut DirStatsCache,
+    use_style: bool,
+    add_decorator: bool,
+    colors: &ColorSpec,
 ) -> Vec<String> {
     if !opts.long_format {
-        return lines;
+        return items.into_iter().map(|i| i.path).collect();
     }
-
     let mut out = Vec::new();
-    for line in lines {
-        if let Some((dt, size_bytes)) = metadata_datetime_and_size(&line) {
-            let mut human_size = format_size_iec(size_bytes);
-            let mut extra: Option<u64> = None;
-
-            if opts.long_extended && is_dir_follow(&line) {
-                if is_symlink(&line) {
-                    let bytes = fs::symlink_metadata(&line).map(|m| m.len()).unwrap_or(0);
-                    human_size = format_size_iec(bytes);
-                    extra = Some(0);
-                } else if let Some(stats) = get_dirsize_stats(&line, cache) {
-                    human_size = stats.human;
-                    extra = Some(stats.files);
-                } else {
-                    let file_count = find_file_count(&line);
-                    let dir_bytes = du_size_bytes(&line);
-                    human_size = format_size_iec(dir_bytes);
-                    extra = Some(file_count);
+    for item in items {
+        if let Some(meta) = &item.metadata {
+            let dt: DateTime<Local> = meta
+                .modified()
+                .unwrap_or_else(|_| std::time::SystemTime::now())
+                .into();
+            let dt_str = dt.format("%Y-%m-%d %H:%M:%S").to_string();
+            let mut human_size = format_size_iec(meta.len());
+            let mut extra = String::new();
+            if opts.long_extended {
+                if item.is_symlink {
+                    let link_path = item.path.trim_end_matches('/');
+                    if fs::metadata(link_path).map(|m| m.is_dir()).unwrap_or(false) {
+                        human_size = format_size_iec(meta.len());
+                        extra = " 0".to_string();
+                    }
+                } else if item.is_dir {
+                    if let Some(stats) = get_dirsize_stats(&item.path, cache) {
+                        human_size = stats.human;
+                        extra = format!(" {}", stats.files);
+                    }
                 }
             }
-
-            if let Some(c) = extra {
-                out.push(format!("{} {} {} {}", dt, human_size, c, line));
-            } else {
-                out.push(format!("{} {} {}", dt, human_size, line));
-            }
+            let path_display = render_styled_path(&item, use_style, add_decorator, colors, opts);
+            out.push(format!(
+                "{} {}{} {}",
+                dt_str, human_size, extra, path_display
+            ));
+        } else {
+            out.push(item.path);
         }
     }
     out
 }
 
-fn counts_summary_transform(lines: Vec<String>, is_tty: bool) -> Vec<String> {
+fn counts_summary_transform(items: Vec<SearchResult>, is_tty: bool) -> Vec<String> {
     let mut counts: HashMap<String, u64> = HashMap::new();
-    let long_re = Regex::new(r"^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]+([.][0-9]+)? ?(B|KiB|MiB|GiB|TiB)( [0-9]+)? ").unwrap();
-
-    for mut line in lines {
-        line = long_re.replace(&line, "").to_string();
-        let mut p = line.trim_end_matches('/').to_string();
+    for item in items {
+        let mut p = item.path.trim_end_matches('/').to_string();
         let d = if let Some(idx) = p.rfind('/') {
             p.truncate(idx);
             if p.is_empty() {
@@ -1030,10 +1207,8 @@ fn counts_summary_transform(lines: Vec<String>, is_tty: bool) -> Vec<String> {
         };
         *counts.entry(d).or_insert(0) += 1;
     }
-
     let mut rows: Vec<(String, u64)> = counts.into_iter().collect();
     rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-
     let mut out = Vec::new();
     if is_tty {
         out.push(format!("{:>7}  {}", "COUNT", "FOLDER"));
@@ -1044,34 +1219,35 @@ fn counts_summary_transform(lines: Vec<String>, is_tty: bool) -> Vec<String> {
     out
 }
 
-fn escape_file_url_path(url_path: &str) -> String {
-    url_path
-        .replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('#', "%23")
-        .replace('?', "%3F")
-}
-
-fn color_wrap(code: &str, text: &str) -> String {
-    if code.is_empty() {
-        text.to_string()
-    } else {
-        format!("\x1b[{}m{}\x1b[0m", code, text)
-    }
-}
-
 fn parse_ls_colors() -> ColorSpec {
     let mut by_key = HashMap::new();
     let mut globs = Vec::new();
-    let mut color_dir = "01;34".to_string();
-    let mut color_link = "01;36".to_string();
-    let mut color_exec = "01;32".to_string();
-
+    let (mut color_dir, mut color_link, mut color_exec) = (
+        "01;34".to_string(),
+        "01;36".to_string(),
+        "01;32".to_string(),
+    );
     if let Ok(spec) = env::var("LS_COLORS") {
         for entry in spec.split(':') {
             if let Some((k, v)) = entry.split_once('=') {
                 if k.starts_with('*') {
-                    globs.push((k.to_string(), v.to_string()));
+                    let mut rx = String::from("^");
+                    for ch in k.chars() {
+                        match ch {
+                            '*' => rx.push_str(".*"),
+                            '?' => rx.push('.'),
+                            '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|'
+                            | '\\' => {
+                                rx.push('\\');
+                                rx.push(ch);
+                            }
+                            _ => rx.push(ch),
+                        }
+                    }
+                    rx.push('$');
+                    if let Ok(re) = Regex::new(&rx) {
+                        globs.push((re, v.to_string()));
+                    }
                 } else {
                     by_key.insert(k.to_string(), v.to_string());
                     match k {
@@ -1084,7 +1260,6 @@ fn parse_ls_colors() -> ColorSpec {
             }
         }
     }
-
     ColorSpec {
         by_key,
         globs,
@@ -1095,285 +1270,176 @@ fn parse_ls_colors() -> ColorSpec {
     }
 }
 
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let mut rx = String::from("^");
-    for ch in pattern.chars() {
-        match ch {
-            '*' => rx.push_str(".*"),
-            '?' => rx.push('.'),
-            '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | '\\' => {
-                rx.push('\\');
-                rx.push(ch);
-            }
-            _ => rx.push(ch),
-        }
+fn default_color_spec() -> ColorSpec {
+    ColorSpec {
+        by_key: HashMap::new(),
+        globs: Vec::new(),
+        color_prefix_dir: "38;2;255;255;255".to_string(),
+        color_dir: "01;34".to_string(),
+        color_link: "01;36".to_string(),
+        color_exec: "01;32".to_string(),
     }
-    rx.push('$');
-    Regex::new(&rx).map(|r| r.is_match(text)).unwrap_or(false)
 }
 
-fn color_code_for_path(abs_path: &str, display_path: &str, colors: &ColorSpec) -> String {
-    let path = Path::new(abs_path);
-    let base = display_path
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or("");
-
-    let symlink_meta = fs::symlink_metadata(path).ok();
-    let metadata = fs::metadata(path).ok();
-
-    let mut code = String::new();
-    let mut allow_glob_overrides = false;
-
-    if symlink_meta
-        .as_ref()
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
+fn color_code_for_path(res: &SearchResult, colors: &ColorSpec) -> String {
+    let ln_code = colors
+        .by_key
+        .get("ln")
+        .cloned()
+        .unwrap_or_else(|| colors.color_link.clone());
+    let symlink_target_mode = res.is_symlink && ln_code == "target";
+    if res.is_symlink && !symlink_target_mode {
+        return ln_code;
+    }
+    if res.is_dir
+        || (symlink_target_mode && res.metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false))
     {
-        if !path.exists() {
-            code = colors
-                .by_key
-                .get("or")
-                .cloned()
-                .unwrap_or_else(|| colors.color_link.clone());
-        } else {
-            code = colors
-                .by_key
-                .get("ln")
-                .cloned()
-                .unwrap_or_else(|| colors.color_link.clone());
+        return colors
+            .by_key
+            .get("di")
+            .cloned()
+            .unwrap_or_else(|| colors.color_dir.clone());
+    }
+    let base = res.path.rsplit('/').next().unwrap_or("");
+    for (re, val) in &colors.globs {
+        if re.is_match(base) {
+            return val.clone();
         }
-    } else if metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false) {
-        let mode = metadata
-            .as_ref()
-            .map(|m| m.permissions().mode())
-            .unwrap_or(0);
-        let sticky = mode & 0o1000 != 0;
-        let other_writable = mode & 0o002 != 0;
+    }
+    if let Some(m) = &res.metadata {
+        if m.permissions().mode() & 0o111 != 0 {
+            return colors.color_exec.clone();
+        }
+    }
+    String::new()
+}
 
-        if sticky && other_writable {
-            if let Some(v) = colors.by_key.get("tw") {
-                code = v.clone();
-            }
-        }
-        if code.is_empty() && sticky {
-            if let Some(v) = colors.by_key.get("st") {
-                code = v.clone();
-            }
-        }
-        if code.is_empty() && other_writable {
-            if let Some(v) = colors.by_key.get("ow") {
-                code = v.clone();
-            }
-        }
-        if code.is_empty() {
-            code = colors
-                .by_key
-                .get("di")
-                .cloned()
-                .unwrap_or_else(|| colors.color_dir.clone());
-        }
-    } else if let Some(m) = symlink_meta.as_ref() {
+fn decorator_for_res(res: &SearchResult) -> Option<char> {
+    if res.is_symlink {
+        return Some('@');
+    }
+    if res.is_dir {
+        return if res.path.ends_with('/') {
+            None
+        } else {
+            Some('/')
+        };
+    }
+    if let Some(m) = &res.metadata {
         let ft = m.file_type();
         if ft.is_fifo() {
-            code = colors.by_key.get("pi").cloned().unwrap_or_default();
-        } else if ft.is_socket() {
-            code = colors.by_key.get("so").cloned().unwrap_or_default();
-        } else if ft.is_block_device() {
-            code = colors.by_key.get("bd").cloned().unwrap_or_default();
-        } else if ft.is_char_device() {
-            code = colors.by_key.get("cd").cloned().unwrap_or_default();
-        } else if ft.is_file() {
-            let mode = m.mode();
-            if mode & 0o4000 != 0 {
-                code = colors.by_key.get("su").cloned().unwrap_or_default();
-                allow_glob_overrides = true;
-            } else if mode & 0o2000 != 0 {
-                code = colors.by_key.get("sg").cloned().unwrap_or_default();
-                allow_glob_overrides = true;
-            } else if mode & 0o111 != 0 {
-                code = colors
-                    .by_key
-                    .get("ex")
-                    .cloned()
-                    .unwrap_or_else(|| colors.color_exec.clone());
-                allow_glob_overrides = true;
-            } else {
-                code = colors.by_key.get("fi").cloned().unwrap_or_default();
-                allow_glob_overrides = true;
-            }
-        } else {
-            code = colors.by_key.get("no").cloned().unwrap_or_default();
+            return Some('|');
+        }
+        if ft.is_socket() {
+            return Some('=');
+        }
+        if m.permissions().mode() & 0o111 != 0 {
+            return Some('*');
         }
     }
-
-    if allow_glob_overrides {
-        for (pat, val) in &colors.globs {
-            if glob_match(pat, base) {
-                code = val.clone();
-                break;
-            }
-        }
-    }
-
-    code
+    None
 }
 
-fn display_path_to_abs_path(display_path: &str, cwd_abs: &str) -> String {
-    if display_path.starts_with('/') {
-        display_path.to_string()
-    } else {
-        format!("{}/{}", cwd_abs, display_path.trim_start_matches("./"))
-    }
-}
-
-fn make_hyperlink_text(abs_target: &str, display_text: &str) -> String {
-    format!(
-        "\x1b]8;;file://{}\x1b\\{}\x1b]8;;\x1b\\",
-        escape_file_url_path(abs_target),
-        display_text
-    )
-}
-
-fn render_split_hyperlinked_path(
-    display_path: &str,
-    abs_path: &str,
-    cwd_abs: &str,
+fn render_styled_path(
+    res: &SearchResult,
+    use_style: bool,
+    add_decorator: bool,
     colors: &ColorSpec,
-) -> String {
-    let (prefix_display, leaf_display) = if display_path.ends_with('/') {
-        let path_core = display_path.trim_end_matches('/');
-        if path_core.is_empty() {
-            (String::new(), "/".to_string())
-        } else if let Some((prefix, leaf)) = path_core.rsplit_once('/') {
-            (format!("{}/", prefix), format!("{}/", leaf))
-        } else {
-            (String::new(), format!("{}/", path_core))
-        }
-    } else if let Some((prefix, leaf)) = display_path.rsplit_once('/') {
-        (format!("{}/", prefix), leaf.to_string())
-    } else {
-        (String::new(), display_path.to_string())
-    };
-
-    let prefix_abs = if prefix_display.is_empty() {
-        String::new()
-    } else {
-        display_path_to_abs_path(&prefix_display, cwd_abs)
-    };
-
-    let leaf_abs = if display_path.ends_with('/') && !prefix_abs.is_empty() {
-        let leaf_name = leaf_display.trim_end_matches('/');
-        format!("{}/{}/", prefix_abs.trim_end_matches('/'), leaf_name)
-    } else {
-        abs_path.to_string()
-    };
-
-    let leaf_code = color_code_for_path(abs_path, display_path, colors);
-    let leaf_colored = color_wrap(&leaf_code, &leaf_display);
-
-    if !prefix_display.is_empty() {
-        let prefix_colored = color_wrap(&colors.color_prefix_dir, &prefix_display);
-        format!(
-            "{}{}",
-            make_hyperlink_text(&prefix_abs, &prefix_colored),
-            make_hyperlink_text(&leaf_abs, &leaf_colored)
-        )
-    } else {
-        make_hyperlink_text(&leaf_abs, &leaf_colored)
-    }
-}
-
-fn add_hyperlink_transform(
-    lines: Vec<String>,
     opts: &Options,
-    is_tty: bool,
-    colors: &ColorSpec,
-) -> Vec<String> {
-    if !is_tty {
-        return lines;
-    }
-
-    let cwd_abs = env::current_dir()
-        .ok()
-        .and_then(|p| fs::canonicalize(p).ok())
-        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let cwd_abs = cwd_abs.to_string_lossy().to_string();
-
-    let long_re = Regex::new(r"^([0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2})[[:space:]]+([0-9]+([.][0-9]+)?[[:space:]]?(B|KiB|MiB|GiB|TiB))([[:space:]][0-9]+)?[[:space:]]+(.*)$").unwrap();
-
-    let mut out = Vec::with_capacity(lines.len());
-    for line in lines {
-        let mut datetime_part = String::new();
-        let mut size_part = String::new();
-        let mut count_part = String::new();
-        let mut path_part = line.clone();
-
-        if opts.long_format {
-            if let Some(c) = long_re.captures(&line) {
-                datetime_part = c.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
-                size_part = c.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
-                count_part = c.get(5).map(|m| m.as_str().to_string()).unwrap_or_default();
-                path_part = c.get(6).map(|m| m.as_str().to_string()).unwrap_or_default();
+) -> String {
+    let mut display_path = res.path.clone();
+    if add_decorator {
+        if let Some(d) = decorator_for_res(res) {
+            if !display_path.ends_with(d) {
+                display_path.push(d);
             }
         }
-
-        if path_part.is_empty() {
-            out.push(line);
-            continue;
-        }
-
-        let abs_path = if path_part.starts_with('/') {
-            path_part.clone()
+    }
+    if !use_style {
+        return display_path;
+    }
+    let (prefix, leaf) = if display_path.ends_with('/') {
+        let core = display_path.trim_end_matches('/');
+        if let Some((p, l)) = core.rsplit_once('/') {
+            (format!("{}/", p), format!("{}/", l))
         } else {
-            format!("{}/{}", cwd_abs, path_part.trim_start_matches("./"))
-        };
-
-        let linked_path = render_split_hyperlinked_path(&path_part, &abs_path, &cwd_abs, colors);
-        if !datetime_part.is_empty() {
-            let mut prefix = format!(
-                "\x1b[37m{}\x1b[0m \x1b[1;36m{}\x1b[0m",
-                datetime_part, size_part
+            (String::new(), display_path.clone())
+        }
+    } else if let Some((p, l)) = display_path.rsplit_once('/') {
+        (format!("{}/", p), l.to_string())
+    } else {
+        (String::new(), display_path.clone())
+    };
+    let leaf_code = color_code_for_path(res, colors);
+    let leaf_colored = if leaf_code.is_empty() {
+        leaf.clone()
+    } else {
+        format!("\x1b[{}m{}\x1b[0m", leaf_code, leaf)
+    };
+    let mut final_str = if prefix.is_empty() {
+        leaf_colored.clone()
+    } else {
+        let prefix_colored = format!("\x1b[{}m{}\x1b[0m", colors.color_prefix_dir, prefix);
+        format!("{}{}", prefix_colored, leaf_colored)
+    };
+    if opts.hyperlinks {
+        let mut abs_prefix = prefix.clone();
+        if !abs_prefix.is_empty() && !abs_prefix.starts_with('/') {
+            if let Ok(cwd) = env::current_dir() {
+                abs_prefix = format!("{}/{}", cwd.display(), abs_prefix.trim_start_matches("./"));
+            }
+        }
+        let mut abs_leaf = res.path.clone();
+        if !abs_leaf.starts_with('/') {
+            if let Ok(cwd) = env::current_dir() {
+                abs_leaf = format!("{}/{}", cwd.display(), abs_leaf.trim_start_matches("./"));
+            }
+        }
+        if prefix.is_empty() {
+            final_str = format!(
+                "\x1b]8;;file://{}\x1b\\{}\x1b]8;;\x1b\\",
+                abs_leaf, final_str
             );
-            if !count_part.is_empty() {
-                prefix.push_str(&count_part);
-            }
-            prefix.push(' ');
-            out.push(format!("{}{}", prefix, linked_path));
         } else {
-            out.push(linked_path);
+            let prefix_colored = format!("\x1b[{}m{}\x1b[0m", colors.color_prefix_dir, prefix);
+            final_str = format!(
+                "\x1b]8;;file://{}\x1b\\{}\x1b]8;;\x1b\\\x1b]8;;file://{}\x1b\\{}\x1b]8;;\x1b\\",
+                abs_prefix, prefix_colored, abs_leaf, leaf_colored
+            );
         }
     }
-    out
+    final_str
 }
 
 fn final_transform(
-    mut lines: Vec<String>,
+    items: Vec<SearchResult>,
     opts: &Options,
-    is_tty: bool,
+    use_style: bool,
+    stdout_is_tty: bool,
     colors: &ColorSpec,
     cache: &mut DirStatsCache,
 ) -> Vec<String> {
+    let items = absolute_paths_transform(items, opts);
+    cache_transform(&items, opts);
+    let add_decorators = stdout_is_tty || opts.classify;
     if opts.counts {
-        lines = absolute_paths_transform(lines, opts);
-        lines = cache_transform(lines, opts);
-        counts_summary_transform(lines, is_tty)
-    } else {
-        lines = sort_results(lines, opts, cache);
-        lines = absolute_paths_transform(lines, opts);
-        lines = cache_transform(lines, opts);
-        lines = add_info_transform(lines, opts, cache);
-        add_hyperlink_transform(lines, opts, is_tty, colors)
+        return counts_summary_transform(items, use_style);
     }
-}
-
-fn dedupe_preserve(lines: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
+    let items = sort_results(items, opts, cache);
     let mut out = Vec::new();
-    for line in lines {
-        if seen.insert(line.clone()) {
-            out.push(line);
+    if opts.long_format {
+        for item_str in add_info_transform(items, opts, cache, use_style, add_decorators, colors) {
+            out.push(item_str);
+        }
+    } else {
+        for res in items {
+            out.push(render_styled_path(
+                &res,
+                use_style,
+                add_decorators,
+                colors,
+                opts,
+            ));
         }
     }
     out
@@ -1384,6 +1450,8 @@ fn run_standard(
     cache: &mut DirStatsCache,
     colors: &ColorSpec,
 ) -> Result<Vec<String>, String> {
+    let stdout_is_tty = io::stdout().is_terminal();
+    let use_style = style_enabled(opts, stdout_is_tty);
     let name = parse_name_pattern(&opts.positional[0], opts.regex_mode);
     let mut type_flag = name.type_flag;
     if opts.force_dir {
@@ -1392,33 +1460,215 @@ fn run_standard(
     if opts.force_file {
         type_flag = Some(TypeFlag::File);
     }
+    let stream_direct = can_stream_direct(opts, use_style);
+    let re = RegexBuilder::new(&name.regex)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| format!("Invalid regex: {}", e))?;
+    let is_catch_all = name.regex == ".*" || name.regex == "^.*$";
+    let timeout_dur = opts.timeout_dur;
+    let timeout_triggered = Arc::new(AtomicBool::new(false));
+    let timeout_clone = timeout_triggered.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(timeout_dur);
+        timeout_clone.store(true, Ordering::Relaxed);
+    });
 
-    let lines = if opts.positional.len() == 1 {
-        run_fd(".", type_flag, &name.regex, false, opts)?
-    } else {
-        match parse_search_dir(
-            &opts.positional[1],
-            opts.regex_mode,
-            opts.force_pattern_mode,
-        ) {
-            SearchDirMode::Path(p) => run_fd(&p, type_flag, &name.regex, false, opts)?,
-            SearchDirMode::Pattern(sd_rx) => {
-                let dirs = find_dirs_anywhere_nul(&sd_rx, opts)?;
-                let mut all = Vec::new();
-                for d in dirs {
-                    if let Ok(mut rows) = run_fd(&d, type_flag, &name.regex, false, opts) {
-                        all.append(&mut rows);
+    if stream_direct {
+        let (tx, rx) = unbounded::<Vec<PathInfo>>();
+        let opts_clone = opts.clone();
+        let timeout_fast = timeout_triggered.clone();
+        if opts.positional.len() == 1 {
+            rayon::spawn(move || {
+                walk_fast(
+                    PathBuf::from("."),
+                    &re,
+                    is_catch_all,
+                    &tx,
+                    opts_clone.visible_only,
+                    opts_clone.respect_ignore,
+                    opts_clone.no_recurse,
+                    opts_clone.follow_links,
+                    type_flag,
+                    false,
+                    &timeout_fast,
+                )
+            });
+        } else {
+            let p_raw = &opts.positional[1];
+            let sd = parse_search_dir(p_raw, opts.regex_mode, opts.force_pattern_mode);
+            rayon::spawn(move || match sd {
+                SearchDirMode::Path(p) => walk_fast(
+                    PathBuf::from(p),
+                    &re,
+                    is_catch_all,
+                    &tx,
+                    opts_clone.visible_only,
+                    opts_clone.respect_ignore,
+                    opts_clone.no_recurse,
+                    opts_clone.follow_links,
+                    type_flag,
+                    false,
+                    &timeout_fast,
+                ),
+                SearchDirMode::Pattern(sd_rx) => {
+                    let mut roots = Vec::new();
+                    let (rtx, rrx) = unbounded::<Vec<PathInfo>>();
+                    let sd_re = RegexBuilder::new(&sd_rx)
+                        .case_insensitive(true)
+                        .build()
+                        .unwrap();
+                    walk_fast(
+                        PathBuf::from("/"),
+                        &sd_re,
+                        false,
+                        &rtx,
+                        opts_clone.visible_only,
+                        opts_clone.respect_ignore,
+                        false,
+                        opts_clone.follow_links,
+                        Some(TypeFlag::Dir),
+                        false,
+                        &timeout_fast,
+                    );
+                    drop(rtx);
+                    for chunk in rrx {
+                        for info in chunk {
+                            roots.push(info.path);
+                        }
                     }
+                    roots.into_par_iter().for_each_with(tx.clone(), |tx_c, d| {
+                        walk_fast(
+                            d,
+                            &re,
+                            is_catch_all,
+                            tx_c,
+                            opts_clone.visible_only,
+                            opts_clone.respect_ignore,
+                            opts_clone.no_recurse,
+                            opts_clone.follow_links,
+                            type_flag,
+                            false,
+                            &timeout_fast,
+                        );
+                    });
                 }
-                dedupe_preserve(all)
+            });
+        }
+
+        let stdout = io::stdout();
+        let mut lock = BufWriter::with_capacity(128 * 1024, stdout.lock());
+        let mut cache_state = if opts.cache_output {
+            init_raw_cache_state()
+        } else {
+            None
+        };
+
+        for chunk in rx {
+            for info in chunk {
+                if let Some(state) = cache_state.as_mut() {
+                    cache_raw_record_path(&info.path.to_string_lossy(), info.is_dir, state);
+                }
+                let _ = lock.write_all(info.path.as_os_str().as_bytes());
+                if info.is_dir && !info.path.as_os_str().as_bytes().ends_with(b"/") {
+                    let _ = lock.write_all(b"/");
+                }
+                let _ = lock.write_all(b"\n");
             }
         }
-    };
 
+        if let Some(mut state) = cache_state {
+            let _ = state.dirs.flush();
+            let _ = state.files.flush();
+        }
+        let _ = lock.flush();
+        return Ok(Vec::new());
+    }
+
+    let mut results = Vec::new();
+    let needs_metadata = opts.long_format || opts.sort_field.is_some();
+    let (tx, rx) = unbounded::<Vec<SearchResult>>();
+    let opts_clone = opts.clone();
+    if opts.positional.len() == 1 {
+        rayon::spawn(move || {
+            walk_rayon_worker(
+                PathBuf::from("."),
+                &re,
+                is_catch_all,
+                &tx,
+                &opts_clone,
+                type_flag,
+                false,
+                needs_metadata,
+                &timeout_triggered,
+            )
+        });
+    } else {
+        let p_raw = &opts.positional[1];
+        match parse_search_dir(p_raw, opts.regex_mode, opts.force_pattern_mode) {
+            SearchDirMode::Path(p) => rayon::spawn(move || {
+                walk_rayon_worker(
+                    PathBuf::from(p),
+                    &re,
+                    is_catch_all,
+                    &tx,
+                    &opts_clone,
+                    type_flag,
+                    false,
+                    needs_metadata,
+                    &timeout_triggered,
+                )
+            }),
+            SearchDirMode::Pattern(sd_rx) => {
+                rayon::spawn(move || {
+                    let mut roots = Vec::new();
+                    let (rtx, rrx) = unbounded::<Vec<SearchResult>>();
+                    let sd_re = RegexBuilder::new(&sd_rx)
+                        .case_insensitive(true)
+                        .build()
+                        .unwrap();
+                    walk_rayon_worker(
+                        PathBuf::from("/"),
+                        &sd_re,
+                        false,
+                        &rtx,
+                        &opts_clone,
+                        Some(TypeFlag::Dir),
+                        false,
+                        false,
+                        &timeout_triggered,
+                    );
+                    drop(rtx);
+                    for chunk in rrx {
+                        for r in chunk {
+                            roots.push(PathBuf::from(r.path));
+                        }
+                    }
+                    roots.into_par_iter().for_each_with(tx.clone(), |tx_c, d| {
+                        walk_rayon_worker(
+                            d,
+                            &re,
+                            is_catch_all,
+                            tx_c,
+                            &opts_clone,
+                            type_flag,
+                            false,
+                            needs_metadata,
+                            &timeout_triggered,
+                        );
+                    });
+                });
+            }
+        }
+    }
+    for chunk in rx {
+        results.extend(chunk);
+    }
     Ok(final_transform(
-        lines,
+        results,
         opts,
-        io::stdout().is_terminal(),
+        use_style,
+        stdout_is_tty,
         colors,
         cache,
     ))
@@ -1429,16 +1679,18 @@ fn run_full(
     cache: &mut DirStatsCache,
     colors: &ColorSpec,
 ) -> Result<Vec<String>, String> {
+    let stdout_is_tty = io::stdout().is_terminal();
+    let use_style = style_enabled(opts, stdout_is_tty);
     let mut search_root = ".".to_string();
     let mut patterns = opts.positional.clone();
     if opts.positional.len() > 1 {
-        let last = opts.positional.last().cloned().unwrap_or_default();
-        if Path::new(&last).is_dir() {
-            search_root = last;
-            patterns.pop();
+        if let Some(last) = opts.positional.last() {
+            if Path::new(last).is_dir() {
+                search_root = last.clone();
+                patterns.pop();
+            }
         }
     }
-
     let mut type_flag = if opts.force_dir {
         Some(TypeFlag::Dir)
     } else if opts.force_file {
@@ -1446,7 +1698,6 @@ fn run_full(
     } else {
         None
     };
-
     let mut regexes = Vec::new();
     for p in &patterns {
         let parsed = parse_name_pattern(p, opts.regex_mode);
@@ -1455,25 +1706,66 @@ fn run_full(
         }
         regexes.push(parsed.regex);
     }
-
     if regexes.is_empty() {
         return Ok(Vec::new());
     }
-
-    let mut rows = run_fd(&search_root, type_flag, &regexes[0], true, opts)?;
-
-    for rx in regexes.iter().skip(1) {
-        let re = Regex::new(rx).map_err(|e| format!("invalid regex '{}': {}", rx, e))?;
-        rows = rows.into_iter().filter(|line| re.is_match(line)).collect();
+    let re = RegexBuilder::new(&regexes[0])
+        .case_insensitive(true)
+        .build()
+        .unwrap();
+    let timeout_dur = opts.timeout_dur;
+    let timeout_triggered = Arc::new(AtomicBool::new(false));
+    let timeout_clone = timeout_triggered.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(timeout_dur);
+        timeout_clone.store(true, Ordering::Relaxed);
+    });
+    let (tx, rx) = unbounded::<Vec<SearchResult>>();
+    let opts_clone = opts.clone();
+    let is_catch_all = regexes[0] == ".*" || regexes[0] == "^.*$";
+    rayon::spawn(move || {
+        walk_rayon_worker(
+            PathBuf::from(search_root),
+            &re,
+            is_catch_all,
+            &tx,
+            &opts_clone,
+            type_flag,
+            true,
+            opts_clone.long_format || opts_clone.sort_field.is_some(),
+            &timeout_triggered,
+        );
+    });
+    let mut rows = Vec::new();
+    for chunk in rx {
+        rows.extend(chunk);
     }
-
-    rows.sort();
-    let rows = prune_children(rows);
-
+    for rx_str in regexes.iter().skip(1) {
+        let re_extra = RegexBuilder::new(rx_str)
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| format!("Invalid regex: {}", e))?;
+        rows = rows
+            .into_iter()
+            .filter(|r| re_extra.is_match(&r.path))
+            .collect();
+    }
+    rows.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut final_rows = Vec::new();
+    let mut last = String::new();
+    for r in rows {
+        let p = r.path.trim_end_matches('/');
+        if !last.is_empty() && p.starts_with(&format!("{}/", last)) {
+            continue;
+        }
+        last = p.to_string();
+        final_rows.push(r);
+    }
     Ok(final_transform(
-        rows,
+        final_rows,
         opts,
-        io::stdout().is_terminal(),
+        use_style,
+        stdout_is_tty,
         colors,
         cache,
     ))
@@ -1483,35 +1775,34 @@ fn main() -> ExitCode {
     let opts = match parse_args() {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("{}", e);
+            if !e.is_empty() {
+                eprintln!("{}", e);
+            }
             return ExitCode::from(2);
         }
     };
-
     let mut cache = DirStatsCache {
         map: HashMap::new(),
-        have_dirsize: Command::new("dirsize")
-            .arg("--help")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false),
-        dirsize_threads: opts.threads_override.clone(),
     };
-
-    let colors = parse_ls_colors();
-
+    let colors = if opts.color_when == ColorWhen::Never {
+        default_color_spec()
+    } else {
+        parse_ls_colors()
+    };
     let result = if opts.force_full {
         run_full(&opts, &mut cache, &colors)
     } else {
         run_standard(&opts, &mut cache, &colors)
     };
-
     match result {
         Ok(lines) => {
-            let stdout = io::stdout();
-            let mut lock = stdout.lock();
-            for line in lines {
-                let _ = writeln!(lock, "{}", line);
+            if !lines.is_empty() {
+                let stdout = io::stdout();
+                let mut lock = BufWriter::with_capacity(128 * 1024, stdout.lock());
+                for line in lines {
+                    let _ = writeln!(lock, "{}", line);
+                }
+                let _ = lock.flush();
             }
             ExitCode::SUCCESS
         }
